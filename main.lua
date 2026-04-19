@@ -7,8 +7,8 @@ local lfs = require("libs/libkoreader-lfs")
 local Font = require("ui/font")
 local Size = require("ui/size")
 local Geometry = require("ui/geometry")
-local Logger = require("logger")
 local DataStorage = require("datastorage")
+local LuaSettings  = require("luasettings")
 local json = require("json")
 
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -17,7 +17,7 @@ local VerticalGroup = require("ui/widget/verticalgroup")
 local TitleBarWidget = require("ui/widget/titlebar")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local ButtonWidget    = require("ui/widget/button")
-local infoMessage = require("ui/widget/infomessage")
+local InfoMessage = require("ui/widget/infomessage")
 local InputDialog = require("ui/widget/inputdialog")
 local HorizontalGroup = require("ui/widget/horizontalgroup") 
 local HorizontalSpan = require("ui/widget/horizontalspan")
@@ -36,16 +36,13 @@ local Uci = require("uci")
 local SettingsWidget = require("settingswidget")
 local _ = require("gettext")
 
--- RUTA ABSOLUTA
-
--- local PLUGIN_PATH = "/mnt/onboard/.adds/koreader/plugins/kochess.koplugin/"
 local function getPluginPath()
-    -- ruta real del fichero main.lua
+    -- resolve path relative to this file
     local src = debug.getinfo(1, "S").source or ""
-    src = src:gsub("^@", "") -- quitar @ de luajit
-    -- convertir .../kochess.koplugin/main.lua -> .../kochess.koplugin/
+    src = src:gsub("^@", "") -- strip leading @ added by LuaJIT
+    -- strip filename to get directory
     local path = src:match("^(.*[/\\])main%.lua$")
-    Logger.info("KOCHESS: Plugin path detected: " .. tostring(path))
+
     return path
 end
 
@@ -59,38 +56,37 @@ local function fileExists(path)
 end
 
 local function chmodX(path)
-    -- En Kindle/Kobo suele hacer falta; en PC normalmente no molesta
+    -- required on Kindle/Kobo; harmless on other platforms
     os.execute('chmod +x "' .. path .. '"')
 end
 
 local function getArch()
-    -- "uname -m" suele estar disponible en Kobo/Kindle/PC (Linux)
+    -- uname -m is available on Kobo, Kindle, and Linux
     local p = io.popen("uname -m 2>/dev/null")
     if not p then return "unknown" end
     local out = p:read("*a") or ""
     p:close()
     out = out:gsub("%s+", "")
-    Logger.info("KOCHESS: Detected architecture: " .. out)
+
     return (#out > 0) and out or "unknown"
 end
 
 local function getEnginePath()
     local arch = getArch()
 
-    -- 1) Preferencia por dispositivo KOReader (más específico)
+    -- 1) prefer device-specific binary
     local candidates = {} 
 
-    -- KOBO: armv7l
     if Device:isKobo() then
         candidates = { ENGINES_DIR .. "stockfish" }
     elseif Device:isKindle() then
         candidates = { ENGINES_DIR .. "stockfish_kindle" }
     else
-        -- PC / entorno de pruebas
+        -- fallback for PC/dev
         candidates = { PLUGIN_PATH .. "dev/engines/stockfish_pc"}
     end
 
-    -- 2) Fallback por arquitectura (por si el "tipo de Device" no cuadra)
+    -- 2) arch fallback if device type doesn't match
     if arch == "x86_64" then
         candidates[#candidates+1] = ENGINES_DIR .. "stockfish_pc"
     elseif arch:match("^arm") then
@@ -99,7 +95,7 @@ local function getEnginePath()
         candidates[#candidates+1] = ENGINES_DIR .. "stockfish_linux_aarch64"
     end
 
-        -- 3) Seleccionar el primero que exista
+    -- 3) use first binary that exists
     for _, path in ipairs(candidates) do
         if fileExists(path) then
             chmodX(path)
@@ -111,7 +107,6 @@ local function getEnginePath()
 end
 
 local UCI_ENGINE_PATH = getEnginePath()
--- local UCI_ENGINE_PATH = PLUGIN_PATH .. "engines/stockfish"
 local GAMES_PATH = PLUGIN_PATH .. "Games"
 
 local BACKGROUND_COLOR = Blitbuffer.COLOR_WHITE
@@ -120,7 +115,7 @@ local PGN_LOG_FONT_SIZE = 14
 local TOOLBAR_PADDING = 4
 
 local Kochess = FrameContainer:extend{
-    name = "kochess_root",
+    name = "casualkochess",
     background = BACKGROUND_COLOR,
     bordersize = 0,
     padding = 0,
@@ -134,12 +129,28 @@ local Kochess = FrameContainer:extend{
 
 function Kochess:init()
     self.dimensions = Geometry:new{ w = self.full_width, h = self.full_height }
-    self.covers_fullscreen = true 
-    Dispatcher:registerAction("kochess", {
-        category = "none", event = "KochessStart", title = _("Chess Game"), general = true,
+    self.covers_fullscreen = true
+    Dispatcher:registerAction("casualkochess", {
+        category = "none", event = "CasualChessStart", title = _("Casual KO Chess"), general = true,
     })
     self.ui.menu:registerToMainMenu(self)
     self:installIconsIfNeeded()
+    -- Load persisted settings
+    local path = DataStorage:getSettingsDir() .. "/casualkochess.lua"
+    self.settings = LuaSettings:open(path)
+end
+
+function Kochess:saveSettings()
+    self.settings:flush()
+end
+
+function Kochess:getSetting(key, default)
+    return self.settings:readSetting(key, default)
+end
+
+function Kochess:setSetting(key, value)
+    self.settings:saveSetting(key, value)
+    self:saveSettings()
 end
 
 local function mkdir_p(path)
@@ -154,26 +165,19 @@ local function mkdir_p(path)
 end
 
 function Kochess:installIconsIfNeeded()
-    -- Directorio de datos real de KOReader (PC / Kobo / Kindle)
     local data_dir = DataStorage:getDataDir()
-    local dest_dir = data_dir .. "/resources/icons/chess"
+    local dest_dir = data_dir .. "/resources/icons/casualchess"
     local src_dir  = PLUGIN_PATH .. "icons"
 
-    Logger.info("KOCHESS: Installing icons")
-    Logger.info("KOCHESS: data_dir  = " .. tostring(data_dir))
-    Logger.info("KOCHESS: src_dir   = " .. tostring(src_dir))
-    Logger.info("KOCHESS: dest_dir  = " .. tostring(dest_dir))
-
     if lfs.attributes(dest_dir, "mode") ~= "directory" then
-        -- Asegurar jerarquía hasta .../resources/icons/chess
-        mkdir_p(data_dir .. "/resources/icons/chess")
+        mkdir_p(data_dir .. "/resources/icons/casualchess")
         os.execute('cp -r "' .. src_dir .. '/." "' .. dest_dir .. '"')
     end
 end
 
 function Kochess:addToMainMenu(menu_items)
-    menu_items.kochess = {
-        text = _("Chess Game"), sorting_hint = "tools", callback = function() self:startGame() end, keep_menu_open = false, 
+    menu_items.casualkochess = {
+        text = _("Casual Chess"), sorting_hint = "tools", callback = function() self:startGame() end, keep_menu_open = false,
     }
 end
 
@@ -181,21 +185,67 @@ function Kochess:startGame()
     self.last_cp = nil
     self.last_mate = nil
     self.eval_turn = nil
+    if self.engine_movetime == nil then
+        self.engine_movetime = self:getSetting("engine_movetime", 1)
+    end
 
     self:initializeGameLogic()
-    self:initializeEngine() 
-    self:initializeBoard()
+    self:initializeEngine()
     self:loadOpenings()
-    self:buildUILayout()
+    self:buildUILayout()  -- initializeBoard is called inside buildUILayout
     self:updateTimerDisplay()
     self:updatePlayerDisplay()
-    self.board:updateBoard() 
-    UIManager:show(self) 
+    self:restoreGameState()  -- load saved PGN/timers if available
+    self.board:updateBoard()
+    UIManager:show(self)
 end
 
--- ==========================================================
--- CARGAMOS LAS APERTURAS
--- ==========================================================
+function Kochess:saveGameState()
+    local pgn = self.game.pgn and self.game.pgn() or ""
+    self:setSetting("saved_pgn", pgn)
+    self:setSetting("saved_time_white", self.timer:getRemainingTime(Chess.WHITE))
+    self:setSetting("saved_time_black", self.timer:getRemainingTime(Chess.BLACK))
+    self:setSetting("saved_running", self.running)
+end
+
+function Kochess:restoreGameState()
+    local pgn = self:getSetting("saved_pgn", "")
+    if not pgn or pgn == "" then return end
+
+    -- Restore the game from saved PGN
+    local ok = pcall(function() self.game.load_pgn(pgn) end)
+    if not ok then
+        -- saved PGN was invalid, start fresh
+        self:setSetting("saved_pgn", "")
+        return
+    end
+
+    local tw = self:getSetting("saved_time_white", nil)
+    local tb = self:getSetting("saved_time_black", nil)
+    if tw then self.timer.time[Chess.WHITE] = tw end
+    if tb then self.timer.time[Chess.BLACK] = tb end
+
+    self.timer.currentPlayer = self.game.turn()
+    self.running = self:getSetting("saved_running", false)
+
+    -- Sync engine to restored position
+    if self.engine and self.engine.state.uciok then
+        self.engine.send("ucinewgame")
+        local moves = {}
+        for _, m in ipairs(self.game.history({ verbose = true })) do
+            moves[#moves+1] = m.from .. m.to .. (m.promotion or "")
+        end
+        if #moves > 0 then
+            self.engine:position({ moves = table.concat(moves, " ") })
+        end
+    end
+
+    self:updatePgnLog()
+    self:updateTimerDisplay()
+    self:updatePlayerDisplay()
+end
+
+-- Load openings database
 function Kochess:loadOpenings()
     if self.openings then return end  -- cache
 
@@ -204,7 +254,7 @@ function Kochess:loadOpenings()
 
     local f = io.open(path, "r")
     if not f then
-        Logger.info("KOCHESS: No se pudo abrir aperturas.json")
+
         return
     end
 
@@ -213,48 +263,45 @@ function Kochess:loadOpenings()
 
     local ok, data = pcall(json.decode, content)
     if not ok or type(data) ~= "table" then
-        Logger.info("KOCHESS: aperturas.json inválido")
+
         return
     end
 
     self.openings = data
-    Logger.info("KOCHESS: Aperturas cargadas: " .. tostring(#self.openings))
+
 end
 
--- ==========================================================
--- ARRANQUE DEL MOTOR (MÉTODO DIRECTO - EL QUE FUNCIONA)
--- ==========================================================
+-- Initialize UCI engine
 function Kochess:initializeEngine()
 
-    local defaultSkill = 10
+    local defaultSkill   = self:getSetting("skill_level", 2)
+    self.engine_movetime = self:getSetting("engine_movetime", 1)
+    self.human_white     = self:getSetting("human_white", true)
+    self.human_black     = self:getSetting("human_black", false)
     self.last_cp = nil
 
     if not UCI_ENGINE_PATH then
-        Logger.info("KOCHESS: No Stockfish engine binary found in " .. ENGINES_DIR)
-        UIManager:show(infoMessage:new{
-            text = "Error",
-            message = "No se encontró un binario de Stockfish.\nCopia el motor en:\n" .. ENGINES_DIR
+
+        UIManager:show(InfoMessage:new{
+            text = "Stockfish engine not found.\nCopy the engine binary to:\n" .. ENGINES_DIR,
         })
         return
     end
-    Logger.info("KOCHESS: Arrancando Stockfish ..." .. UCI_ENGINE_PATH)
 
-    -- [CORRECCIÓN] Pasamos "stockfish" como argumento.
     self.engine = Uci.UCIEngine.spawn(UCI_ENGINE_PATH, {})
 
     
     if not self.engine then
-        Logger.info("KOCHESS: Fallo al crear proceso.")
-        UIManager:show(infoMessage:new{text="Error", message="Motor no arranca."})
+
+        UIManager:show(InfoMessage:new{ text = "Engine failed to start." })
         return
     end
 
     self.engine:on("read", function(data)
         if data then
             local clean = data:gsub("\r", "")
-            Logger.info("RAW ENGINE: " .. clean:gsub("\n", " "))
 
-            -- Parseo robusto del último score cp (multipv 1 si viene)
+            -- parse score cp/mate from info lines (multipv 1 only)
             for line in tostring(data):gmatch("[^\r\n]+") do
                 if line:match("^info ") then
                     local mp = tonumber(line:match(" multipv (%d+)")) or 1
@@ -266,7 +313,7 @@ function Kochess:initializeEngine()
                             if self.eval_turn == Chess.BLACK then mv = -mv end
                             self.last_mate = mv
                             self.last_cp = nil
-                            Logger.info("RAW ENGINE: Mate detected: " .. tostring(mv))
+
                         elseif cp then
                             local cpv = tonumber(cp)
                             if self.eval_turn == Chess.BLACK then cpv = -cpv end
@@ -280,12 +327,14 @@ function Kochess:initializeEngine()
     end)
 
     self.engine:on("uciok", function()
-        Logger.info("KOCHESS: ¡RECIBIDO UCIOK!")
-        self:updatePgnLogInitialText()
 
-        -- CONFIGURACIÓN PARA KOBO (RÁPIDA Y LIGERA)
-        self.engine.send("setoption name Hash value 8")   -- Mínima memoria
-        self.engine.send("setoption name Threads value 1") -- Un solo hilo
+        if not self:getSetting("saved_pgn", "") or self:getSetting("saved_pgn", "") == "" then
+            self:updatePgnLogInitialText()
+        end
+
+        -- conservative settings for e-reader hardware
+        self.engine.send("setoption name Hash value 8")
+        self.engine.send("setoption name Threads value 1")
         self.engine.send("setoption name Skill Level value " .. defaultSkill)
         self.engine.send("setoption name Move Overhead value 150")
         self.engine.send("setoption name Ponder value false")
@@ -300,121 +349,176 @@ function Kochess:initializeEngine()
     self.engine:on("bestmove", function(move_uci)
         self.engine_busy = false
 
-        Logger.info("KOCHESS: Motor mueve -> " .. tostring(move_uci))
         if not self.game.is_human(self.game.turn()) then
             self:uciMove(move_uci)
         end
     end)
     
-    -- Damos un respiro y saludamos
-    os.execute("sleep 0.2")
+    -- Send uci immediately; Stockfish buffers stdin so the command
+    -- will be ready when the process starts. The uci() polling loop
+    -- waits asynchronously for uciok without blocking the UI.
 
-    Logger.info("KOCHESS: Enviando 'uci'...")
     self.engine:uci()
 end
 
--- [RESTO DE FUNCIONES LÓGICAS]
 function Kochess:initializeGameLogic()
     self.game = Chess:new()
-    self.game.reset() 
-    self.game.initial_fen = self.game.fen() 
-    self.timer = Timer:new({[Chess.WHITE]=1800, [Chess.BLACK]=1800}, {[Chess.WHITE]=0, [Chess.BLACK]=0}, function() self:updateTimerDisplay() end)
-    self.running = false 
+    self.game.reset()
+    self.game.initial_fen = self.game.fen()
+    -- Apply persisted player types
+    local human_white = self:getSetting("human_white", true)
+    local human_black = self:getSetting("human_black", false)
+    self.game.set_human(Chess.WHITE, human_white)
+    self.game.set_human(Chess.BLACK, human_black)
+    -- Apply persisted time controls
+    local base_w = self:getSetting("time_base_white", 900)
+    local base_b = self:getSetting("time_base_black", 900)
+    local incr_w = self:getSetting("time_incr_white", 10)
+    local incr_b = self:getSetting("time_incr_black", 10)
+    self.timer = Timer:new(
+        {[Chess.WHITE]=base_w, [Chess.BLACK]=base_b},
+        {[Chess.WHITE]=incr_w, [Chess.BLACK]=incr_b},
+        function() self:updateTimerDisplay() end)
+    self.running = false
 end
 
-function Kochess:initializeBoard()
+function Kochess:initializeBoard(board_h)
     self.board = ChessBoard:new{
-        game = self.game, width = self.full_width, height = math.floor(0.7 * self.full_height), 
+        game = self.game,
+        width = self.full_width,
+        height = board_h or math.floor(0.7 * self.full_height),
         moveCallback = function(move) self:onMoveExecuted(move) end,
         onPromotionNeeded = function(f, t, c) self:openPromotionDialog(f, t, c) end,
     }
 end
 
 function Kochess:buildUILayout()
-    local title_bar = self:createTitleBar()
+    -- Build layout bottom-up:
+    -- 1. Status bar  (fixed, measured)
+    -- 2. Log section (fixed, exact content height)
+    -- 3. Board       (fills remaining space, constrained to square)
     local status_bar = self:createStatusBar()
-    local board_h = self.board:getSize().h
-    local log_h = math.max(100, self.full_height - title_bar:getSize().h - board_h - status_bar:getSize().h)
-    local toolbar_width = math.floor(math.min(log_h / 4 + 16, self.full_width / 3))
-    
-    local eval_h = 22  -- altura de una línea (ajusta si quieres)
-    local pgn_w  = self.full_width - toolbar_width
+    local status_h   = status_bar:getSize().h
+
+    -- Log section dimensions
+    local pad           = Screen:scaleBySize(8)
+    local line_h        = Screen:scaleBySize(PGN_LOG_FONT_SIZE) + 4
+    local pgn_h         = line_h
+    local eval_h        = line_h
+    local log_border    = Screen:scaleBySize(1)
+    local toolbar_btn_h = Screen:scaleBySize(32)  -- fixed comfortable toolbar height
+    local text_frame_h  = log_border * 2 + pad + pgn_h + eval_h + pad
+    local min_log_h     = text_frame_h + toolbar_btn_h  -- min = 1 pgn line + eval + toolbar
+
+    -- Board: square, fitted into remaining space above log+status.
+    -- Board padding (top/left/right) is accounted for in board.lua cell calculation.
+    local BOARD_SIZE    = 8
+    local board_pad     = Screen:scaleBySize(8)
+    local available_h   = self.full_height - status_h - min_log_h
+    -- cell uses usable area (subtract board padding)
+    local usable_w      = self.full_width - 2 * board_pad
+    local cell          = math.floor(math.min(usable_w, available_h - board_pad) / BOARD_SIZE)
+    local board_h       = cell * BOARD_SIZE + board_pad  -- widget height includes top padding
+    -- log_h = everything remaining; pgn_log expands to fill extra space
+    local log_h         = self.full_height - status_h - board_h
+    local pgn_h         = log_h - text_frame_h + line_h  -- expands: base frame minus eval line
+
+    self:initializeBoard(board_h)
+    local toolbar_btn_w = math.floor(self.full_width / 5)
+    local inner_w       = self.full_width - 2 * pad
+
+    -- pgn_log expands to fill any extra space above the fixed frame content.
+    -- Minimum = 1 line. Extra space comes from board being width-constrained.
+    local frame_fixed_h = log_border * 2 + pad + eval_h + pad  -- frame without pgn
+    local pgn_h         = math.max(line_h, log_h - frame_fixed_h - toolbar_btn_h)
 
     self.eval_line = TextWidget:new{
-        text = "Eval: --",
-        face = Font:getFace("smallinfofont", 14),
-        halign = "left",
+        text    = "Eval: --",
+        face    = Font:getFace(PGN_LOG_FONT, PGN_LOG_FONT_SIZE),
+        halign  = "left",
         padding = 0,
-        width  = pgn_w,       
+        width   = inner_w,
     }
 
     local eval_line_left = LeftContainer:new{
-        dimen = Geometry:new{ w = pgn_w, h = eval_h + 5 },
+        dimen = Geometry:new{ w = inner_w, h = eval_h },
         self.eval_line,
     }
-    
 
     self:updateEvalLine()
 
-    self.pgn_log = self:createPgnLogWidget(_("Welcome!"), pgn_w, log_h - eval_h)
+    self.pgn_log = self:createPgnLogWidget("", inner_w, pgn_h)
 
-    local pgn_with_eval = VerticalGroup:new{
-        width  = pgn_w,
-        height = log_h,
-        self.pgn_log,
-        eval_line_left,   -- 👈 aquí, no pongas self.eval_line directamente
+    local toolbar = HorizontalGroup:new{
+        self:createToolbarButton("chevron.left",       toolbar_btn_w, toolbar_btn_h, function() self:handleUndoMove(false) end),
+        self:createToolbarButton("chevron.right",      toolbar_btn_w, toolbar_btn_h, function() self:handleRedoMove(false) end),
+        self:createToolbarButton("bookmark",           toolbar_btn_w, toolbar_btn_h, function() UIManager:show(self:openSaveDialog()) end),
+        self:createToolbarButton("appbar.filebrowser", toolbar_btn_w, toolbar_btn_h, function() self:openLoadPgnDialog() end),
+        self:createToolbarButton("plus",               toolbar_btn_w, toolbar_btn_h, function()
+            UIManager:show(ConfirmBox:new{
+                text        = _("Start a new game?"),
+                ok_text     = _("New Game"),
+                ok_callback = function() self:resetGame() end,
+            })
+        end),
     }
 
-    local toolbar = VerticalGroup:new{
-        width = toolbar_width, height = log_h, padding = TOOLBAR_PADDING,
-        self:createToolbarButton("chevron.left", toolbar_width-8, 40, function() self:handleUndoMove(false) end),
-        self:createToolbarButton("chevron.right", toolbar_width-8, 40, function() self:handleRedoMove(false) end),
-        self:createToolbarButton("bookmark", toolbar_width-8, 40, function() UIManager:show(self:openSaveDialog()) end),
-        self:createToolbarButton("appbar.filebrowser", toolbar_width-8, 40, function() self:openLoadPgnDialog() end),
+    local log_section = VerticalGroup:new{
+        width = self.full_width,
+        FrameContainer:new{
+            background     = BACKGROUND_COLOR,
+            bordersize     = log_border,
+            padding        = 0,
+            padding_left   = pad,
+            padding_right  = pad,
+            padding_top    = pad,
+            padding_bottom = pad,
+            width          = self.full_width,
+            VerticalGroup:new{
+                width = inner_w,
+                self.pgn_log,
+                eval_line_left,
+            },
+        },
+        toolbar,
     }
 
     local main_vgroup = VerticalGroup:new{
         align = "center", width = self.full_width, height = self.full_height,
-        title_bar, self.board,
-        FrameContainer:new{ background = BACKGROUND_COLOR, padding=0, HorizontalGroup:new{ height=log_h, toolbar, pgn_with_eval } },
-        status_bar,
+        self.board, log_section, status_bar,
     }
-    self.status_bar = status_bar 
-    self[1] = CenterContainer:new{ dimen = Screen:getSize(), main_vgroup }
+    self.status_bar = status_bar
+    -- Use direct assignment (not CenterContainer) so the layout always
+    -- anchors to y=0. CenterContainer shifts content up when total height
+    -- exceeds screen height, clipping the title bar above the screen top.
+    self[1] = main_vgroup
 end
 
 function Kochess:updatePgnLogInitialText()
-    local text = _("Kochess Ready.\nWhite to play.")
-    if self.engine and self.engine.state.uciok then text = text .. "\nEngine: " .. (self.engine.state.id_name or "Stockfish") end
-    if self.pgn_log then self.pgn_log:setText(text); UIManager:setDirty(self, "ui") end
+    if self.pgn_log then self.pgn_log:setText(""); UIManager:setDirty(self, "ui") end
 end
 
--- ==========================================================
--- DETECTA LAS APERTURAS
--- ==========================================================
+-- Detect opening from move history
 function Kochess:detectOpening()
     if not self.openings then return nil end
 
-    -- Intento 1: SAN (lo que necesitas para comparar con "e4 e6")
+    -- get SAN history
     local hist = self.game.history and self.game:history() or nil
     if type(hist) ~= "table" or #hist == 0 then
-        -- fallback: por si tu API es game.history(...)
+        -- fallback: try functional-style call
         hist = self.game.history and self.game.history() or {}
     end
 
     local moves = {}
     for i, san in ipairs(hist) do
         if type(san) == "string" and san ~= "" then
-            -- normaliza SAN (quita + # ! ? por si acaso)
+            -- strip check/annotation symbols
             san = san:gsub("[+#?!]", "")
             moves[#moves + 1] = san
         end
     end
 
     local played = table.concat(moves, " ")
-
-    -- Debug útil
-    Logger.info("KOCHESS: played SAN = " .. played)
 
     local best = nil
     for _, o in ipairs(self.openings) do
@@ -427,8 +531,6 @@ function Kochess:detectOpening()
 
     return best
 end
-
-
 
 local function formatEval(self)
     local mate = self.last_mate
@@ -468,14 +570,7 @@ local function formatEval(self)
     return string.format("eval: %+.2f %s", v, tag)
 end
 
-
-
 function Kochess:updateEvalLine()
-    Logger.info("KOCHESS: EvalLine -> %s (cp=%s mate=%s)",
-    tostring(self.eval_line and "ok" or "nil"),
-    tostring(self.last_cp),
-    tostring(self.last_mate)
-)
     if self.eval_line then
         self.eval_line:setText(formatEval(self))
         UIManager:setDirty(self, "ui")
@@ -483,22 +578,21 @@ function Kochess:updateEvalLine()
 end
 
 function Kochess:createPgnLogWidget(txt, w, h) return TextBoxWidget:new{ use_xtext=true, text=txt, face=Font:getFace(self.notation_font, self.notation_size), scroll=true, width=w, height=h, dialog=self } end
-function Kochess:createToolbarButton(icon, w, h, cb) return ButtonWidget:new{ icon=icon, icon_width=w, icon_height=h, callback=cb } end
+function Kochess:createToolbarButton(icon, w, h, cb) return ButtonWidget:new{ icon=icon, width=w, icon_width=w, icon_height=h, padding=0, margin=0, bordersize=0, callback=cb } end
 function Kochess:handleUndoMove(all) self:stopUCI(); self.timer:stop(); if all then while self.game.undo() do end else self.game.undo() end; self.board:updateBoard(); self:updatePgnLog(); UIManager:setDirty(self, "ui"); self.timer:start() end
 function Kochess:handleRedoMove(all) self:stopUCI(); self.timer:stop(); if all then while self.game.redo() do end else self.game.redo() end; self.board:updateBoard(); self:updatePgnLog(); UIManager:setDirty(self, "ui"); self.timer:start() end
 
 function Kochess:onMoveExecuted(move)
-    Logger.info("KOCHESS: Player Move " .. tostring(move.san))
+
     self.running = true
 
-    -- 1) Actualiza historial/PGN (aquí ya se ha aplicado la jugada al game)
+    -- update PGN log
     self:updatePgnLog()
 
-    -- 2) Detecta apertura AHORA (historial ya incluye la jugada del humano o del motor)
+    -- detect opening
     local opening = self:detectOpening()
-    Logger.info("KOCHESS: Opening detected: " .. (opening and opening.name or "none"))
 
-    -- 3) Pinta línea (si hay apertura, la mostramos; la eval se añade si existe)
+    -- update eval/opening line
     if self.eval_line then
         local eval_txt = formatEval(self)
         if opening then
@@ -508,21 +602,19 @@ function Kochess:onMoveExecuted(move)
         end
     end
 
-    -- 4) Si la SAN tiene '#', es mate: mostrar diálogo y NO seguir
+    -- checkmate: show dialog and stop
     local san = tostring(move.san or "")
     if san:find("#", 1, true) then
-        -- tras aplicar la jugada, el turno ya cambió; el ganador es el que acaba de mover
+        -- turn already flipped; winner is the side that just moved
         local winner_color = (self.game.turn() == Chess.WHITE) and Chess.BLACK or Chess.WHITE
         self:showMateDialog(winner_color)
         UIManager:setDirty(self, "ui")
         return
     end
 
-    -- 5) Continúa flujo normal
     self:launchNextMove()
     UIManager:setDirty(self, "ui")
 end
-
 
 function Kochess:launchNextMove()
     self.timer:switchPlayer()
@@ -532,37 +624,36 @@ end
 
 function Kochess:uciMove(str)
     local m = self.game.move({from=str:sub(1,2), to=str:sub(3,4), promotion=(#str==5 and str:sub(5,5) or nil)})
-    if m then self.board:handleGameMove(m); self:onMoveExecuted(m) end
+    if m then self.board:handleGameMove(m) end
 end
 
 function Kochess:launchUCI()
-
-    local CAP_MS = 20000 -- 20 segundos
-    -- Evitar reentradas: si el motor ya está pensando, no relanzar go
+    -- guard against re-entry
     if self.engine_busy then return end
     self.engine_busy = true
 
+    -- Build the move list from game history
     local moves = {}
     for _, m in ipairs(self.game.history({ verbose = true })) do
         moves[#moves + 1] = m.from .. m.to .. (m.promotion or "")
     end
-    
-    -- Si tu wrapper ya asume startpos, basta con moves=...
     self.engine:position({ moves = table.concat(moves, " ") })
 
     self.eval_turn = self.game.turn()
-    
+
+    -- Send clock values and a hard movetime cap; engine_movetime is adjustable via Settings.
+    local movetime_ms = (self.engine_movetime or 1) * 1000
+    local wtime = math.max(100, self.timer:getRemainingTime(Chess.WHITE) * 1000)
+    local btime = math.max(100, self.timer:getRemainingTime(Chess.BLACK) * 1000)
+
     self.engine:go({
-        wtime = self.timer:getRemainingTime(Chess.WHITE) * 1000,
-        btime = self.timer:getRemainingTime(Chess.BLACK) * 1000,
-        winc  = self.timer.increment[Chess.WHITE] * 1000,
-        binc  = self.timer.increment[Chess.BLACK] * 1000,
-        movestogo = 30, -- opcional, ayuda a distribuir tiempo
-        movetime = CAP_MS,
+        wtime    = wtime,
+        btime    = btime,
+        winc     = self.timer.increment[Chess.WHITE] * 1000,
+        binc     = self.timer.increment[Chess.BLACK] * 1000,
+        movetime = movetime_ms,
     })
-
 end
-
 
 function Kochess:stopUCI() if self.engine and self.engine.state.uciok then self.engine.send("stop") end end
 
@@ -574,12 +665,11 @@ function Kochess:updatePgnLog()
         txt = txt .. " " .. m
     end
     self.pgn_log:setText(txt)
-    
-    -- Fuerza a mostrar el final (si el widget soporta scrollToBottom/scrollTo)
+
+    -- scroll to end
     if self.pgn_log.scrollToBottom then
         self.pgn_log:scrollToBottom()
     elseif self.pgn_log.scrollTo then
-        -- muchos widgets usan scrollTo(y)
         self.pgn_log:scrollTo(1e9)
     end
 end
@@ -587,17 +677,23 @@ end
 function Kochess:updateTimerDisplay()
     local ind = self.running and ((self.game.turn()==Chess.WHITE and " < ") or " > ") or " || "
     self.status_bar:setTitle(self.timer:formatTime(self.timer:getRemainingTime(Chess.WHITE)) .. ind .. self.timer:formatTime(self.timer:getRemainingTime(Chess.BLACK)))
+    self:updatePlayerDisplay(ind)
     UIManager:setDirty(self.status_bar, "ui")
 end
 
-function Kochess:updatePlayerDisplay()
-    local function lbl(c) return self.game.is_human(c) and "Human" or "Engine" end
-    self.status_bar:setSubTitle(lbl(Chess.WHITE) .. " - " .. lbl(Chess.BLACK))
+function Kochess:updatePlayerDisplay(ind)
+    local white = "White(" .. (self.game.is_human(Chess.WHITE) and "Human" or "Computer") .. ")"
+    local black = "(" .. (self.game.is_human(Chess.BLACK) and "Human" or "Computer") .. ")Black"
+    local sep = ind or (self.running and ((self.game.turn()==Chess.WHITE and " < ") or " > ") or " || ")
+    self.status_bar:setSubTitle(white .. sep .. black)
 end
 
 function Kochess:resetGame()
     self:stopUCI(); self.game.reset(); self.timer:reset()
     if self.engine then self.engine.send("ucinewgame") end
+    -- Clear saved game so next launch starts fresh
+    self:setSetting("saved_pgn", "")
+    self.running = false
     self:updateTimerDisplay(); self:updatePlayerDisplay(); self.board:updateBoard(); UIManager:setDirty(self, "ui")
 end
 
@@ -609,42 +705,58 @@ function Kochess:showMateDialog(winner_color)
         ok_text = _("Continue"),
         cancel_text = nil,
         ok_callback = function()
-            -- Reiniciar estado lógico
             self.last_cp = nil
             self.last_mate = nil
             self.eval_turn = nil
             self.running = false
 
-            -- Reiniciar juego/reloj/motor
             self:resetGame()
-
-            -- Texto inicial y evaluación inicial
             self:updatePgnLogInitialText()
             self:updateEvalLine()
 
-            -- Si el que empieza es el motor, que mueva
+            -- trigger engine move if computer plays first
             self:launchNextMove()
         end,
     })
 end
 
-
-function Kochess:createTitleBar()
-    return TitleBarWidget:new{ fullscreen=true, title=_("Kochess"), left_icon="home", left_icon_tap_callback=function() self:resetGame() end, close_callback=function() self.timer:stop(); if self.engine then self.engine:stop() end; UIManager:close(self) end }
-end
-
 function Kochess:createStatusBar()
+    local Screen = require("device").screen
     return TitleBarWidget:new{
-        fullscreen=true, title="00:00", subtitle="HvH", left_icon="appbar.settings",
-        left_icon_tap_callback=function()
+        fullscreen             = true,
+        title                  = "00:00",
+        subtitle               = "HvH",
+        left_icon              = "appbar.settings",
+        left_icon_size_ratio   = 1.0,
+        right_icon_size_ratio  = 1.0,
+        title_top_padding      = Screen:scaleBySize(2),
+        bottom_v_padding       = Screen:scaleBySize(8),
+        left_icon_tap_callback = function()
             SettingsWidget:new{
-                engine=self.engine, timer=self.timer, game=self.game, parent=self,
-                onApply=function() 
+                engine  = self.engine,
+                timer   = self.timer,
+                game    = self.game,
+                parent  = self,
+                onApply = function()
                     if not self.game.is_human(self.game.turn()) then self:launchUCI() end
-                    self.timer:reset(); self:updatePlayerDisplay(); self:updateTimerDisplay()
-                end
+                    self.timer:reset()
+                    self:updatePlayerDisplay()
+                    self:updateTimerDisplay()
+                end,
             }:show()
-        end
+        end,
+        close_callback = function()
+            UIManager:show(ConfirmBox:new{
+                text        = _("Exit Chess?"),
+                ok_text     = _("Exit"),
+                ok_callback = function()
+                    self.timer:stop()
+                    if self.engine then self.engine:stop() end
+                    self:saveGameState()
+                    UIManager:close(self, "full")
+                end,
+            })
+        end,
     }
 end
 
@@ -658,39 +770,30 @@ function Kochess:openLoadPgnDialog()
                 if not path then return end
                 local fh = io.open(path, "r")
                 if not fh then
-                    UIManager:show(infoMessage:new{
-                        text = _("Error"), message = _("Could not open file:\n") .. path,
+                    UIManager:show(InfoMessage:new{
+                        text = _("Could not open file:\n") .. path,
                     })
                     return
                 end
                 local pgn_data = fh:read("*a")
                 fh:close()
 
-                -- 1. Paramos el motor para no confundirlo
+                -- stop engine and timer
                 self:stopUCI()
                 self.timer:stop()
-                
-                -- 2. Reiniciamos el tablero lógico
-                self.game.reset() 
-                
-                -- 3. Cargamos la partida
+
+                self.game.reset()
                 self.game.load_pgn(pgn_data)
 
-                -- [CAMBIO] Quitamos el rebobinado (undo) para ver el estado final.
-                -- Si prefieres ver el principio, descomenta la siguiente línea:
-                -- while self.game.undo() do end
-                
-                -- 4. Actualizamos todo
                 self.board:updateBoard()
                 self:updatePgnLog()
                 self:updateTimerDisplay()
                 self:updatePlayerDisplay()
-                
-                -- 5. Sincronizamos con Stockfish (Nueva posición)
+
+                -- sync engine to new position
                 if self.engine and self.engine.state.uciok then
                     self.engine.send("ucinewgame")
                     self.engine.send("isready")
-                    -- Opcional: Si quieres que el motor analice ya, podrías lanzar launchUCI aquí
                 end
 
                 UIManager:setDirty(self, "ui")
@@ -699,25 +802,25 @@ function Kochess:openLoadPgnDialog()
         }
     )
 end
--- Función auxiliar para procesar el guardado
+
 function Kochess:handleSaveFile(dialog, filename_input, current_dir)
-    filename_input:onCloseKeyboard() -- Cerrar teclado
+    filename_input:onCloseKeyboard()
     local dir = current_dir
-    local file = filename_input:getText():gsub("\n$", "") -- Limpiar nombre
-    
-    -- Añadir extensión .pgn si falta
+    local file = filename_input:getText():gsub("\n$", "")
+
+    -- ensure .pgn extension
     if not file:lower():match("%.pgn$") then
         file = file .. ".pgn"
     end
 
     local sep = package.config:sub(1, 1)
     local fullpath = dir .. sep .. file
-    local pgn_data = self.game.pgn() -- Obtener PGN del juego actual
+    local pgn_data = self.game.pgn()
 
     local fh, err = io.open(fullpath, "w")
     if not fh then
-        UIManager:show(infoMessage:new{
-            text = _("Error"), message = _("Could not save file:\n") .. tostring(err),
+        UIManager:show(InfoMessage:new{
+            text = _("Could not save file:\n") .. tostring(err),
         })
         return
     end
@@ -726,15 +829,13 @@ function Kochess:handleSaveFile(dialog, filename_input, current_dir)
     fh:close()
 
     UIManager:close(dialog)
-    UIManager:show(infoMessage:new{
-        text = _("Saved"), message = _("Game saved to:\n") .. fullpath
+    UIManager:show(InfoMessage:new{
+        text = _("Game saved to:\n") .. fullpath,
     })
 end
 
--- Función principal para abrir el diálogo de guardar
 function Kochess:openSaveDialog()
     local current_dir = GAMES_PATH
-    --local current_dir = lfs.currentdir()
     local dialog
     local filename_input
 
@@ -836,21 +937,22 @@ function Kochess:openSaveDialog()
     return dialog
 end
 
-
 function Kochess:openPromotionDialog(f,t,c)
     local choices = {q=Chess.QUEEN, r=Chess.ROOK, b=Chess.BISHOP, n=Chess.KNIGHT}
-    local icons_p = { [Chess.QUEEN] = {[Chess.WHITE]="chess/wQ", [Chess.BLACK]="chess/bQ"}, [Chess.ROOK] = {[Chess.WHITE]="chess/wR", [Chess.BLACK]="chess/bR"}, [Chess.BISHOP] = {[Chess.WHITE]="chess/wB", [Chess.BLACK]="chess/bB"}, [Chess.KNIGHT] = {[Chess.WHITE]="chess/wN", [Chess.BLACK]="chess/bN"} }
-    
+    local icons_p = { [Chess.QUEEN] = {[Chess.WHITE]="casualchess/wQ", [Chess.BLACK]="casualchess/bQ"}, [Chess.ROOK] = {[Chess.WHITE]="casualchess/wR", [Chess.BLACK]="casualchess/bR"}, [Chess.BISHOP] = {[Chess.WHITE]="casualchess/wB", [Chess.BLACK]="casualchess/bB"}, [Chess.KNIGHT] = {[Chess.WHITE]="casualchess/wN", [Chess.BLACK]="casualchess/bN"} }
+
+    local icon_size = Screen:scaleBySize(60)
+
     local dialog = InputDialog:new{ title=_("Promote to"), buttons={} }
     local btns = {}
     for char, type in pairs(choices) do
-        table.insert(btns, ButtonWidget:new{ icon=icons_p[type][c], icon_width=60, icon_height=60, callback=function() 
+        table.insert(btns, ButtonWidget:new{ icon=icons_p[type][c], width=icon_size, icon_width=icon_size, icon_height=icon_size, callback=function()
             UIManager:close(dialog)
             local m = self.game.move({from=f, to=t, promotion=char})
             if m then self.board:handleGameMove(m); self:onMoveExecuted(m) end
         end })
     end
-    
+
     local content = FrameContainer:new{ radius=Size.radius.window, bordersize=Size.border.window, background=BACKGROUND_COLOR, padding=Size.padding.large,
         VerticalGroup:new{ align="center", dialog.title_bar, VerticalSpan:new{width=20}, HorizontalGroup:new{ spacing=20, unpack(btns) } }
     }

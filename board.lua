@@ -1,27 +1,25 @@
--- board.lua (VERSIÓN BLINDADA: REFRESCO GLOBAL)
+-- board.lua
 local _ = require("gettext")
-local logger = require("logger")
 local Geom = require("ui/geometry")
 local Blitbuffer = require("ffi/blitbuffer")
 local ButtonTable = require("buttontable")
 local FrameContainer = require("ui/widget/container/framecontainer")
-local CenterContainer = require("ui/widget/container/centercontainer")
 local Chess = require("chess/src/chess")
 local Device = require("device")
 local Screen = Device.screen
-local UIManager = require("ui/uimanager") -- Necesario para forzar el refresco
+local UIManager = require("ui/uimanager")
 
 local BOARD_SIZE = 8
 local SELECTED_BORDER = 5
 
 local icons = {
-    empty = "chess/empty", 
-    [Chess.PAWN]   = { [Chess.WHITE] = "chess/wP", [Chess.BLACK] = "chess/bP" },
-    [Chess.KNIGHT] = { [Chess.WHITE] = "chess/wN", [Chess.BLACK] = "chess/bN" },
-    [Chess.BISHOP] = { [Chess.WHITE] = "chess/wB", [Chess.BLACK] = "chess/bB" },
-    [Chess.ROOK]   = { [Chess.WHITE] = "chess/wR", [Chess.BLACK] = "chess/bR" },
-    [Chess.QUEEN]  = { [Chess.WHITE] = "chess/wQ", [Chess.BLACK] = "chess/bQ" },
-    [Chess.KING]   = { [Chess.WHITE] = "chess/wK", [Chess.BLACK] = "chess/bK" },
+    empty = "casualchess/empty", 
+    [Chess.PAWN]   = { [Chess.WHITE] = "casualchess/wP", [Chess.BLACK] = "casualchess/bP" },
+    [Chess.KNIGHT] = { [Chess.WHITE] = "casualchess/wN", [Chess.BLACK] = "casualchess/bN" },
+    [Chess.BISHOP] = { [Chess.WHITE] = "casualchess/wB", [Chess.BLACK] = "casualchess/bB" },
+    [Chess.ROOK]   = { [Chess.WHITE] = "casualchess/wR", [Chess.BLACK] = "casualchess/bR" },
+    [Chess.QUEEN]  = { [Chess.WHITE] = "casualchess/wQ", [Chess.BLACK] = "casualchess/bQ" },
+    [Chess.KING]   = { [Chess.WHITE] = "casualchess/wK", [Chess.BLACK] = "casualchess/bK" },
 }
 
 local Board = FrameContainer:extend{
@@ -30,9 +28,12 @@ local Board = FrameContainer:extend{
     height = 250,
     moveCallback = nil,
     holdCallback = nil,
-    onPromotionNeeded = nil, 
+    onPromotionNeeded = nil,
+    bordersize = 0,
     padding = 0,
     background = Blitbuffer.COLOR_WHITE,
+    -- Padding around the board (top, left, right only — bottom flush with log)
+    board_padding = nil,  -- set in init from Screen:scaleBySize(8)
 }
 
 function Board:getSize()
@@ -41,18 +42,32 @@ end
 
 function Board:init()
     if not self.game then
-        logger.error("Chess: must be initialized with a Game object")
+        error("Kochess Board: must be initialized with a Game object")
         return
     end
 
     local margins = self:allMarginSizes()
-    self.button_size = math.min(
-        math.floor(self.width / (BOARD_SIZE + 1)) - margins.w,
-        math.floor(self.height / (BOARD_SIZE + 1)) - margins.h
+    -- ButtonTable forces padding = Size.padding.buttontable on every button.
+    -- button_size is the ICON size = cell - 2*bt_pad, so that the rendered
+    -- button (icon + 2*padding) exactly fills the cell.
+    -- ButtonTable forces padding independently per axis:
+    --   horizontal: Size.padding.button   = scaleBySize(2) (small)
+    --   vertical:   Size.padding.buttontable = scaleBySize(4) (larger)
+    -- button width  = cell (ButtonTable treats width as TOTAL, no extra padding added)
+    -- button height = cell (icon_height + 2*pad_v = cell, so icon_height = cell - 2*pad_v)
+    local bt_pad_v = Screen:scaleBySize(4)  -- Size.padding.buttontable (vertical)
+    self.board_padding = Screen:scaleBySize(8)
+    -- Subtract padding from usable area before computing cell size
+    local usable_w = self.width  - 2 * self.board_padding
+    local usable_h = self.height - self.board_padding  -- no bottom padding
+    local cell = math.min(
+        math.floor(usable_w / BOARD_SIZE) - margins.w,
+        math.floor(usable_h / BOARD_SIZE) - margins.h
     )
+    self.button_size  = cell
+    self.icon_height  = cell - 2 * bt_pad_v
 
     self.selected = nil
-    logger.dbg(string.format("Initializing board: %dx%d, button size: %d", self.width, self.height, self.button_size))
 
     local grid = {}
     for rank = BOARD_SIZE - 1, 0, -1 do 
@@ -63,18 +78,34 @@ function Board:init()
         table.insert(grid, row)
     end
 
+    local table_size = cell * BOARD_SIZE  -- cell includes padding
     self.table = ButtonTable:new{
+        width = table_size,
         buttons = grid,
         shrink_unneeded_width = false,
         zero_sep = true,
         sep_width = 0,
-        addVerticalSpan = function() end, 
+        addVerticalSpan = function() end,
     }
 
     self:applySquareColors()
-    self[1] = CenterContainer:new{ dimen = self:getSize(), self.table }
+    -- Centre the table horizontally and apply top/left/right padding
+    local CenterContainer = require("ui/widget/container/centercontainer")
+    local padded = FrameContainer:new{
+        bordersize     = 0,
+        background     = self.background,
+        padding        = 0,
+        padding_top    = self.board_padding,
+        padding_left   = 0,
+        padding_right  = 0,
+        padding_bottom = 0,
+        CenterContainer:new{
+            dimen = Geom:new{ w = self.width, h = cell * BOARD_SIZE + self.board_padding },
+            self.table,
+        },
+    }
+    self[1] = padded
 
-    logger.dbg("Chess board initialized")
 end
 
 function Board:createSquareButton(file, rank)
@@ -82,14 +113,10 @@ function Board:createSquareButton(file, rank)
         id = Board.toId(file, rank),
         icon = icons.empty,
         alpha = true,
-        width = self.button_size,
-        height = self.button_size,
+        width      = self.button_size,   -- total button width = cell (fills width exactly)
         icon_width = self.button_size,
-        icon_height = self.button_size,
-        
-        -- Geometría fija (Anti-Ghosting)
-        bordersize = Screen:scaleBySize(SELECTED_BORDER), 
-        
+        icon_height = self.icon_height,  -- smaller so button height = cell after padding
+        bordersize = Screen:scaleBySize(SELECTED_BORDER),
         margin = 0,
         padding = 0,
         allow_hold_when_disabled = true,
@@ -112,18 +139,15 @@ function Board:applySquareColors()
     end
 end
 
--- ==========================================================
--- GESTIÓN DE CLICS (Lógica de selección)
--- ==========================================================
+-- Click handling
 function Board:handleClick(file, rank)
     local id = Board.toId(file, rank)
     local square = Board.idToPosition(id) 
-    logger.dbg("Chess click on square: " .. square)
 
     -- Block interaction if not human
     if self.game and self.game.is_human and (not self.game.is_human(self.game.turn())) then
-        logger.dbg("Chess: ignoring input, engine turn (" .. tostring(self.game.turn()) .. ")")
-        -- Si había selección, la quitamos para evitar estados raros
+
+        -- clear any stale selection
         if self.selected then
             self:unmarkSelected(self.selected)
             self.selected = nil
@@ -136,25 +160,24 @@ function Board:handleClick(file, rank)
 
     if self.selected then
         if self.selected == square then
-            -- 1. Deseleccionar misma pieza
+            -- deselect
             self:unmarkSelected(square)
             self.selected = nil
-            
+
         elseif is_my_piece then
-            -- 2. Cambiar selección (Apagar vieja -> Encender nueva)
-            logger.dbg("Chess switch selection: " .. self.selected .. " -> " .. square)
+            -- switch selection
             self:unmarkSelected(self.selected)
             self.selected = square
             self:markSelected(square)
-            
+
         else
-            -- 3. Mover
+            -- attempt move
             self:handleMove(self.selected, square)
         end
     else
-        -- 4. Seleccionar nueva
+        -- select piece
         if is_my_piece then
-            logger.dbg("Chess select new: " .. square)
+
             self.selected = square
             self:markSelected(square)
         end
@@ -183,7 +206,7 @@ function Board:handleMove(from, to)
         if move then
             self:handleGameMove(move)
         else
-            logger.dbg("Illegal move attempted")
+
             self:unmarkSelected(from)
             self:updateBoard()
         end
@@ -193,7 +216,6 @@ end
 function Board:handleGameMove(move)
     if not move then return end 
 
-    logger.dbg("Applying game move: " .. move.san)
     self:updateSquare(move.from) 
     self:updateSquare(move.to)   
 
@@ -233,19 +255,15 @@ function Board:handleMoveFlags(move, to)
     end
 end
 
--- ==========================================================
--- FUNCIONES VISUALES (REFRESCO GLOBAL)
--- ==========================================================
+-- Visual updates
 function Board:markSelected(square)
     local id_result = Board.chessToId(square)
     if not id_result then return end
     local button = self.table:getButtonById(id_result)
-    
-    -- Blanco con borde negro
+
     button.frame.background = Blitbuffer.COLOR_WHITE
     button.frame.border_color = Blitbuffer.COLOR_BLACK
-    
-    -- Refresco FUERTE del tablero completo
+
     UIManager:setDirty(self, "ui")
 end
 
@@ -253,13 +271,12 @@ function Board:unmarkSelected(square)
     local id_result = Board.chessToId(square)
     if not id_result then return end
     local button = self.table:getButtonById(id_result)
-    
-    -- Restaurar color original y borde invisible
+
+    -- restore original square color
     local original_color = Board.positionToColor(square)
     button.frame.background = original_color
     button.frame.border_color = original_color
-    
-    -- Refresco FUERTE
+
     UIManager:setDirty(self, "ui")
 end
 
@@ -267,16 +284,15 @@ function Board:placePiece(square, piece, color)
     local icon = (piece and icons[piece] and icons[piece][color]) or icons.empty
     local id_result = Board.chessToId(square)
     if not id_result then return end
-    
+
     local button = self.table:getButtonById(id_result)
     button:setIcon(icon, self.button_size)
-    
-    -- Asegurar limpieza de fondo y borde
+
+    -- restore square color after icon set
     local original_color = Board.positionToColor(square)
     button.frame.background = original_color
     button.frame.border_color = original_color
-    
-    -- Refresco FUERTE
+
     UIManager:setDirty(self, "ui")
 end
 
@@ -290,8 +306,7 @@ function Board:updateSquare(square)
 end
 
 function Board:updateBoard()
-    logger.dbg("Chess: Update entire board")
-    local board_fen = self.game.board() 
+    local board_fen = self.game.board()
     for file_idx = 0, BOARD_SIZE - 1 do
         for rank_idx = 0, BOARD_SIZE - 1 do
             local element = board_fen[BOARD_SIZE - rank_idx][file_idx + 1]
@@ -299,16 +314,14 @@ function Board:updateBoard()
             if element then
                 self:placePiece(square, element.type, element.color)
             else
-                self:placePiece(square) 
+                self:placePiece(square)
             end
         end
     end
-    -- Aseguramos que tras una actualización masiva, se pinte todo
     UIManager:setDirty(self, "ui")
 end
 
--- Utilidades
-function Board.toId(file, rank) return file * BOARD_SIZE + rank end
+function Board.toId(file, rank) return file * BOARD_SIZE + rank + 1 end
 
 function Board.chessToId(position)
     if type(position) == "string" and #position == 2 then
@@ -324,11 +337,12 @@ function Board.chessToId(position)
 end
 
 function Board.idToPosition(id)
-    if type(id) == "number" and id >= 0 and id < BOARD_SIZE * BOARD_SIZE then
-        local file_idx = math.floor(id / BOARD_SIZE)
-        local rank_idx = id % BOARD_SIZE
+    if type(id) == "number" and id >= 1 and id <= BOARD_SIZE * BOARD_SIZE then
+        local zero_id = id - 1  -- convert back to 0-based for decomposition
+        local file_idx = math.floor(zero_id / BOARD_SIZE)
+        local rank_idx = zero_id % BOARD_SIZE
         local file_char = string.char(file_idx + string.byte('a'))
-        local rank_char = tostring(rank_idx + 1) 
+        local rank_char = tostring(rank_idx + 1)
         return file_char .. rank_char
     end
     return nil

@@ -13,7 +13,7 @@ function Chess:new()
     local instance = _Chess()
     instance.human_player = {
         [instance.WHITE] = true,
-        [instance.BLACK] = true,
+        [instance.BLACK] = false,  -- Computer plays Black by default
     }
     instance.redo_stack = {}
     instance.set_human = function(color, isHuman)

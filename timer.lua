@@ -1,31 +1,29 @@
--- chess_timer.lua
--- A Lua module for a chess timer that counts down from a specified duration for each player.
+-- timer.lua
+-- Chess clock that counts down per player with optional increment.
 local Chess = require("chess/src/chess")
 local Utils = require("utils")
 
 local Timer = {}
-local TIMER_TIMEOUT = 10
+local TIMER_TIMEOUT = 1
 Timer.__index = Timer
 
---- Creates a new ChessTimer instance.
--- @param duration The total time for each player in seconds.
--- @param callback A function to call every second while the timer is running.
--- @return A new instance of ChessTimer.
+-- Creates a new Timer. duration and increment are tables keyed by color.
+-- callback is called every second while the timer is running.
 function Timer:new(duration, increment, callback)
     local obj = {
-        base = duration,  -- Total time for each player in seconds
+        base = duration,  -- original per-player durations; never modified
         increment = increment,
-        time = duration,
+        time = { [Chess.WHITE] = duration[Chess.WHITE], [Chess.BLACK] = duration[Chess.BLACK] },
         currentPlayer = Chess.WHITE,
         running = false,
         startTime = 0,
-        callback = callback  -- Store the callback function
+        callback = callback,
     }
     setmetatable(obj, self)
     return obj
 end
 
---- Starts the timer for the current player and the coroutine.
+-- Starts the timer for the current player.
 function Timer:start()
     if not self.running then
         self.startTime = os.time()
@@ -34,20 +32,19 @@ function Timer:start()
             Utils.pollingLoop(TIMER_TIMEOUT,
                               function()
                                   if self:getRemainingTime(self.currentPlayer) <= 0 then
-                                      self:stop()  -- Stop the timer if time is up
+                                      self:stop()
                                       return
                                   end
                                   self.callback()
                               end,
                               function()
                                   return self.running
-                              end,
-                              false)
+                              end)
         end
     end
 end
 
---- Stops the timer and updates the remaining time for the current player.
+-- Stops the timer and commits elapsed time to the current player's clock.
 function Timer:stop()
     if self.running then
         local elapsed = os.difftime(os.time(), self.startTime)
@@ -57,30 +54,30 @@ function Timer:stop()
     end
 end
 
---- Switches the turn to the other player and starts their timer.
+-- Stops the current player's clock and starts the opponent's.
 function Timer:switchPlayer()
-    self:stop()  -- Stop the current timer
+    self:stop()
     self.currentPlayer = (self.currentPlayer == Chess.WHITE) and Chess.BLACK or Chess.WHITE
-    self:start()  -- Start the timer for the next player
+    self:start()
 end
 
---- Resets the timer for both players to the initial duration.
+-- Resets both clocks to the initial duration.
 function Timer:reset()
-    self.time = self.base
+    self.time = { [Chess.WHITE] = self.base[Chess.WHITE], [Chess.BLACK] = self.base[Chess.BLACK] }
     self.currentPlayer = Chess.WHITE
     self.running = false
 end
 
---- Gets the remaining time for the specified player.
--- @param player The player to check (Chess.WHITE or Chess.BLACK).
--- @return The remaining time in seconds for the specified player.
+-- Returns remaining time in seconds for the given player.
 function Timer:getRemainingTime(player)
+    if self.running and player == self.currentPlayer then
+        local elapsed = os.difftime(os.time(), self.startTime)
+        return math.max(0, self.time[player] - elapsed)
+    end
     return self.time[player]
 end
 
---- Formats the time in seconds into a "MM:SS" format.
--- @param seconds The time in seconds to format.
--- @return A string representing the formatted time.
+-- Formats seconds as "HH:MM:SS".
 function Timer:formatTime(seconds)
     local hours = math.floor(seconds / (60 * 60))
     local minutes = math.floor(seconds / 60) % 60
