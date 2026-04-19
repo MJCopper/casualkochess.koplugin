@@ -28,7 +28,6 @@ It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 1. Copy `casualkochess.koplugin/` into your KOReader plugins directory:
    - Kobo: `/mnt/onboard/.adds/koreader/plugins/`
-   - Kindle: `/mnt/us/koreader/plugins/`
 
 2. Copy the appropriate Stockfish binary into `casualkochess.koplugin/engines/`:
    - Kobo: a compatible `stockfish` binary is included — this step can be skipped
