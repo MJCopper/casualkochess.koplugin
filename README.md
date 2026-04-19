@@ -22,7 +22,7 @@ It has been derived from the work by Baptiste Fouques & Victor Fariña
 - Position evaluation display
 - PGN save and load
 - Game state saved and restored on close/reopen
-- Designed for casual play — defaults set to a friendly difficulty
+- Designed for casual play, defaults set to a friendly difficulty
 
 ## Installation
 
@@ -30,7 +30,7 @@ It has been derived from the work by Baptiste Fouques & Victor Fariña
    - Kobo: `/mnt/onboard/.adds/koreader/plugins/`
 
 2. Copy the appropriate Stockfish binary into `casualkochess.koplugin/engines/`:
-   - Kobo: a compatible `stockfish` binary is included — this step can be skipped
+   - Kobo: a compatible `stockfish` binary is included, this step can be skipped
 
 3. Restart KOReader. The plugin appears in the main menu as **Casual Chess**.
 
