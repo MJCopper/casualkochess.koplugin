@@ -1,4 +1,4 @@
-# Casual KO Chess
+# Casual KO Chess for KOReader E-Ink Devices
 
 I made this plugin for my own specific use case, it is only tested on my personal Kobo Clara BW. So use it at your own risk. Thought it would be worth making this code available for others interest.
 
