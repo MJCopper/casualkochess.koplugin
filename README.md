@@ -14,9 +14,12 @@ It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 ## Features
 
-- Play chess against the Stockfish engine
-- Adjustable computer skill level (0–20) with approximate ELO display
+- Play chess against the Stockfish engine.
+- Pre-defined difficulty levels.
+- Adjustable computer skill level (0–20)
 - Adjustable computer think time (1–10 seconds)
+- Adjustable computer search depth (1-ThinkTime)
+- Adjustable blunder chance (0%-100%), Creates the possibilty for Stockfish to makes mistakes, makes it play more like a casual human.
 - Chess clock with configurable time controls per player (base time + increment)
 - Opening detection with ECO code display
 - Position evaluation display
