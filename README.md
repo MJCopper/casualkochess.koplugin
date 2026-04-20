@@ -6,7 +6,7 @@ Work-In-Progress casual chess plugin for KOReader, designed for Kobo (and maybe 
 It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 **Author:** MJCopper  
-**Version:** 0.0.1  
+**Version:** 0.0.2  
 **License:** GPL v3  
 **Based on:** kochess by its original author's Baptiste Fouques & Victor Fariña
 
