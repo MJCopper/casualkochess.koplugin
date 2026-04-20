@@ -22,6 +22,7 @@ local MovableContainer = require("ui/widget/container/movablecontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
 
 local Chess = require("chess")
+local EngineWidget = require("enginewidget")
 local _ = require("gettext")
 
 local BACKGROUND_COLOR = Blitbuffer.COLOR_WHITE
@@ -81,7 +82,7 @@ function SettingsWidget:initializeState()
     if not currentSkill then
         local skillOpt = self.engine.state.options["Skill Level"]
 
-        currentSkill = (skillOpt and tonumber(skillOpt.value)) or 2
+        currentSkill = (skillOpt and tonumber(skillOpt.value)) or 0
     end
     currentSkill = math.max(0, math.min(20, currentSkill))
 
@@ -102,7 +103,9 @@ function SettingsWidget:initializeState()
         },
         skill_level     = currentSkill,
         elo_strength    = currentElo,
+        engine_depth    = (self.parent and self.parent.engine_depth) or 2,
         engine_movetime = (self.parent and self.parent.engine_movetime) or 1,
+        blunder_chance  = (self.parent and self.parent.blunder_chance) or 0.20,
         time_control = {
             [Chess.WHITE] = {
                 base_minutes  = self.timer.base[Chess.WHITE] / 60,
@@ -131,10 +134,8 @@ function SettingsWidget:show()
     self.dialog = dlg
 
     self:buildPlayerTypeGroup()
-    self:buildSkillGroup()
-    self:buildMoveTimeGroup()
-
-    self:buildTimeGroups()
+    self:buildDifficultyGroup()
+    self:buildEngineButton()
     self:assembleContent()
 
     dlg:refocusWidget()
@@ -159,218 +160,10 @@ end
 function SettingsWidget:buildPlayerTypeGroup()
     local w = self.dialog.element_width
 
-    local makeList = function(color)
-        return {{
-            { text = _("Human"),    checked =     self.changes.human_choice[color], color = color },
-            { text = _("Computer"), checked = not self.changes.human_choice[color], color = color },
-        }}
-    end
-
-    local function onSelect(entry)
-        self.changes.human_choice[entry.color] = (entry.text == _("Human"))
-        self:markDirty()
-    end
-
-    local whiteRadios = RadioButtonTable:new{
-        width  = w,
-        radio_buttons = makeList(Chess.WHITE),
-        button_select_callback = onSelect,
-        parent = self.dialog,
-    }
-    local blackRadios = RadioButtonTable:new{
-        width  = w,
-        radio_buttons = makeList(Chess.BLACK),
-        button_select_callback = onSelect,
-        parent = self.dialog,
-    }
-
-    self.playerSettingsGroup = VerticalGroup:new{
-        width = w,
-        spacing = Size.padding.large,
-        VerticalGroup:new{
-            width = w,
-            TextWidget:new{ text = _("White")..":", face = Font:getFace("cfont", 22) },
-            VerticalSpan:new{ width = Size.padding.small },
-            whiteRadios,
-        },
-        VerticalGroup:new{
-            width = w,
-            TextWidget:new{ text = _("Black")..":", face = Font:getFace("cfont", 22) },
-            VerticalSpan:new{ width = Size.padding.small },
-            blackRadios,
-        },
-    }
-end
-
--- ============================================================================
---  SKILL LEVEL GROUP
--- ============================================================================
-function SettingsWidget:buildSkillGroup()
-    -- Skill 0..20 maps to positions 1..21 in ButtonProgressWidget
-    local function skillToPos(s) return (tonumber(s) or 2) + 1 end
-    local function posToSkill(p) return p - 1 end
-
-    local w = self.dialog.element_width
-    self.skillProgress = ButtonProgressWidget:new{
-        width         = w,
-        num_buttons   = self.max_skill - self.min_skill + 1,  -- 21
-        position      = skillToPos(self.changes.skill_level),
-        fine_tune     = true,
-        callback = function(pos)
-            if pos == "+" then
-                self.changes.skill_level = math.min(self.max_skill,
-                    (tonumber(self.changes.skill_level) or 1) + 1)
-            elseif pos == "-" then
-                self.changes.skill_level = math.max(self.min_skill,
-                    (tonumber(self.changes.skill_level) or 1) - 1)
-            else
-                self.changes.skill_level = posToSkill(pos)
-            end
-            self.skillProgress.position = skillToPos(self.changes.skill_level)
-            self:markDirty()
-            UIManager:setDirty(self, "ui")
-        end,
-    }
-    local skill_elo = {
-        [0]=800, [1]=900, [2]=1000, [3]=1100, [4]=1200,
-        [5]=1300, [6]=1400, [7]=1500, [8]=1600, [9]=1650,
-        [10]=1700, [11]=1750, [12]=1800, [13]=1900, [14]=2000,
-        [15]=2100, [16]=2200, [17]=2400, [18]=2600, [19]=2800, [20]=3200,
-    }
-    local function skillLabel()
-        local s = tonumber(self.changes.skill_level) or 2
-        local elo = skill_elo[s] or "?"
-        return _("Computer Skill") .. ": " .. tostring(s) .. "  ELO: ~" .. tostring(elo)
-    end
-    self.skillLabelWidget = TextWidget:new{
-        text = skillLabel(),
-        face = Font:getFace("cfont", 22),
-    }
-    -- Update label text whenever value changes
-    local orig_skill_cb = self.skillProgress.callback
-    self.skillProgress.callback = function(pos)
-        orig_skill_cb(pos)
-        self.skillLabelWidget:setText(skillLabel())
-    end
-    self.skillSettingsGroup = VerticalGroup:new{
-        width = w,
-        self.skillLabelWidget,
-        VerticalSpan:new{ width = Size.padding.small },
-        self.skillProgress,
-    }
-end
-
--- ============================================================================
---  ENGINE THINK TIME GROUP
--- ============================================================================
-function SettingsWidget:buildMoveTimeGroup()
-    local min_t, max_t = 1, 10
-    local w = self.dialog.element_width
-    self.moveTimeProgress = ButtonProgressWidget:new{
-        width       = w,
-        num_buttons = max_t - min_t + 1,  -- 10
-        position    = (tonumber(self.changes.engine_movetime) or 1) - min_t + 1,
-        fine_tune   = true,
-        callback = function(pos)
-            if pos == "+" then
-                self.changes.engine_movetime = math.min(max_t,
-                    (tonumber(self.changes.engine_movetime) or 1) + 1)
-            elseif pos == "-" then
-                self.changes.engine_movetime = math.max(min_t,
-                    (tonumber(self.changes.engine_movetime) or 1) - 1)
-            else
-                self.changes.engine_movetime = pos + min_t - 1
-            end
-            self.moveTimeProgress.position = (tonumber(self.changes.engine_movetime) or 1) - min_t + 1
-            self:markDirty()
-            UIManager:setDirty(self, "ui")
-        end,
-    }
-    local function moveTimeLabel()
-        return _("Computer Think Time") .. ": " .. tostring(tonumber(self.changes.engine_movetime) or 1) .. " sec"
-    end
-    self.moveTimeLabelWidget = TextWidget:new{
-        text = moveTimeLabel(),
-        face = Font:getFace("cfont", 22),
-    }
-    local orig_move_cb = self.moveTimeProgress.callback
-    self.moveTimeProgress.callback = function(pos)
-        orig_move_cb(pos)
-        self.moveTimeLabelWidget:setText(moveTimeLabel())
-    end
-    self.moveTimeGroup = VerticalGroup:new{
-        width = w,
-        self.moveTimeLabelWidget,
-        VerticalSpan:new{ width = Size.padding.small },
-        self.moveTimeProgress,
-    }
-end
-
--- ============================================================================
---  ELO GROUP
--- ============================================================================
-function SettingsWidget:buildEloGroup()
-    -- value display
-    local tv = TextWidget:new{
-        text   = tostring(self.changes.elo_strength),
-        face   = Font:getFace("cfont",22),
-        halign = "center",
-        width  = 80
-    }
-    self.eloValueText = tv
-
-    local function updateDisplay()
-        tv:setText(tostring(math.floor(self.changes.elo_strength)))
-        UIManager:setDirty(self, "ui")
-    end
-
-    local function onClick(delta)
-        self.changes.elo_strength = math.max(
-            self.min_elo,
-            math.min(self.max_elo, self.changes.elo_strength + delta)
-        )
-        updateDisplay()
-        self:markDirty()
-    end
-
-    local decBtn = ButtonWidget:new{
-        text     = "- "..tostring(self.elo_step),
-        callback = function() onClick(-self.elo_step) end,
-        face     = Font:getFace("cfont",20),
-        padding  = Size.padding.small,
-        radius   = Size.radius.button,
-        parent   = self.dialog,
-    }
-    local incBtn = ButtonWidget:new{
-        text     = "+ "..tostring(self.elo_step),
-        callback = function() onClick(self.elo_step) end,
-        face     = Font:getFace("cfont",20),
-        padding  = Size.padding.small,
-        radius   = Size.radius.button,
-        parent   = self.dialog,
-    }
-
-    local ctrl = HorizontalGroup:new{ spacing=Size.padding.small, decBtn, tv, incBtn }
-    self.eloSettingsGroup = HorizontalGroup:new{
-        width = self.dialog.element_width,
-        TextWidget:new{ text=_("Engine ELO Strength")..":", face=Font:getFace("cfont",22) },
-        ctrl
-    }
-end
-
--- ============================================================================
---  TIME GROUPS: DoubleSpinWidget popup for minutes + increment
--- ============================================================================
-function SettingsWidget:buildTimeGroups()
     local function fmt(b, i)
-        if i > 0 then
-            return string.format("%d min  +%ds", b, i)
-        else
-            return string.format("%d min", b)
-        end
+        if i > 0 then return string.format("%d min  +%ds", b, i)
+        else return string.format("%d min", b) end
     end
-
-    local btn_width = math.floor(self.dialog.element_width * 0.55)
 
     local function openTimePicker(color, btn)
         local cur = self.changes.time_control[color]
@@ -391,7 +184,7 @@ function SettingsWidget:buildTimeGroups()
                 cur.base_minutes = left_val
                 cur.incr_seconds = right_val
                 btn.text = fmt(left_val, right_val)
-                btn.width = btn_width
+                btn.width = btn_w
                 btn:init()
                 self:markDirty()
                 UIManager:setDirty(self, "ui")
@@ -399,30 +192,228 @@ function SettingsWidget:buildTimeGroups()
         })
     end
 
-    local function makeTimeRow(color, label_text)
+    local function onSelect(entry)
+        self.changes.human_choice[entry.color] = (entry.text == _("Human"))
+        self:markDirty()
+    end
+
+    local function makeRow(color)
         local cur = self.changes.time_control[color]
+        local radio_w = math.floor(w * 0.60)
+        local btn_w   = math.floor(w * 0.35)
+        local label = (color == Chess.WHITE) and _("White") or _("Black")
         local btn
         btn = ButtonWidget:new{
             text     = fmt(cur.base_minutes, cur.incr_seconds),
-            width    = btn_width,
+            width    = btn_w,
             radius   = Size.radius.button,
             padding  = Size.padding.small,
             callback = function() openTimePicker(color, btn) end,
         }
+        -- Two-row RadioButtonTable stacks Human / Computer vertically
+        local radios = RadioButtonTable:new{
+            width  = radio_w,
+            radio_buttons = {
+                {{ text = _("Human"),    checked =     self.changes.human_choice[color], color = color }},
+                {{ text = _("Computer"), checked = not self.changes.human_choice[color], color = color }},
+            },
+            button_select_callback = onSelect,
+            parent = self.dialog,
+        }
+        local radioCol = VerticalGroup:new{
+            width = radio_w,
+            TextWidget:new{ text = label .. ":", face = Font:getFace("cfont", 22) },
+            VerticalSpan:new{ width = Size.padding.small },
+            radios,
+        }
         return HorizontalGroup:new{
-            width   = self.dialog.element_width,
+            width   = w,
             spacing = Size.padding.large,
-            TextWidget:new{ text = label_text, face = Font:getFace("cfont", 22) },
+            radioCol,
             btn,
         }
     end
 
-    self.timeSettingsGroup = VerticalGroup:new{
-        width   = self.dialog.element_width,
+    self.playerSettingsGroup = VerticalGroup:new{
+        width   = w,
         spacing = Size.padding.large,
-        makeTimeRow(Chess.WHITE, _("White Time")),
-        makeTimeRow(Chess.BLACK, _("Black Time")),
+        makeRow(Chess.WHITE),
+        makeRow(Chess.BLACK),
     }
+end
+
+
+-- ============================================================================
+--  DIFFICULTY PRESETS
+-- ============================================================================
+function SettingsWidget:buildDifficultyGroup()
+    local w = self.dialog.element_width
+
+    local PRESETS = {
+        {
+            name          = _("Beginner"),
+            skill_level   = 0,
+            engine_depth  = 1,
+            engine_movetime = 1,
+            blunder_chance  = 0.40,
+            elo           = 429,
+        },
+        {
+            name          = _("Casual"),
+            skill_level   = 0,
+            engine_depth  = 2,
+            engine_movetime = 1,
+            blunder_chance  = 0.20,
+            elo           = 780,
+        },
+        {
+            name          = _("Intermediate"),
+            skill_level   = 0,
+            engine_depth  = 3,
+            engine_movetime = 2,
+            blunder_chance  = 0.10,
+            elo           = 1029,
+        },
+        {
+            name          = _("Club Player"),
+            skill_level   = 10,
+            engine_depth  = 0,
+            engine_movetime = 3,
+            blunder_chance  = 0.0,
+            elo           = 1865,
+        },
+        {
+            name          = _("Master"),
+            skill_level   = 20,
+            engine_depth  = 0,
+            engine_movetime = 10,
+            blunder_chance  = 0.0,
+            elo           = 2832,
+        },
+    }
+
+    -- Find which preset (if any) matches current settings
+    local function currentPos()
+        for i, p in ipairs(PRESETS) do
+            if p.skill_level    == self.changes.skill_level
+            and p.engine_depth  == self.changes.engine_depth
+            and p.engine_movetime == self.changes.engine_movetime
+            and math.abs((p.blunder_chance or 0) - (self.changes.blunder_chance or 0)) < 0.01
+            then
+                return i
+            end
+        end
+        return nil  -- custom / no match
+    end
+
+    local function difficultyLabel()
+        local pos = currentPos()
+        if pos then
+            local p = PRESETS[pos]
+            return p.name .. "  ELO: ~" .. tostring(p.elo)
+        else
+            return _("Custom")
+        end
+    end
+
+    self.difficultyLabelWidget = TextWidget:new{
+        text = difficultyLabel(),
+        face = Font:getFace("cfont", 22),
+    }
+
+    local function applyPreset(pos)
+        local p = PRESETS[pos]
+        if not p then return end
+        self.changes.skill_level     = p.skill_level
+        self.changes.engine_depth    = p.engine_depth
+        self.changes.engine_movetime = p.engine_movetime
+        self.changes.blunder_chance  = p.blunder_chance
+        self:applyEngineChanges(self.changes)
+        self.difficultyLabelWidget:setText(difficultyLabel())
+        self:markDirty()
+        UIManager:setDirty(self.parent, "ui")
+    end
+
+    local cur = currentPos() or 1
+    self.difficultyProgress = ButtonProgressWidget:new{
+        width       = w,
+        num_buttons = #PRESETS,
+        position    = cur,
+        fine_tune   = true,
+        callback    = function(pos)
+            local p = currentPos() or 1
+            if pos == "+" then p = math.min(#PRESETS, p + 1)
+            elseif pos == "-" then p = math.max(1, p - 1)
+            else p = pos end
+            self.difficultyProgress.position = p
+            applyPreset(p)
+        end,
+    }
+
+    self.difficultyGroup = VerticalGroup:new{
+        width = w,
+        self.difficultyLabelWidget,
+        VerticalSpan:new{ width = Size.padding.small },
+        self.difficultyProgress,
+    }
+end
+function SettingsWidget:buildEngineButton()
+    local w = self.dialog.element_width
+    self.engineButton = ButtonWidget:new{
+        text    = _("Computer Engine..."),
+        width   = w,
+        radius  = Size.radius.button,
+        padding = Size.padding.small,
+        callback = function()
+            local ew = EngineWidget:new{
+                engine  = self.engine,
+                parent  = self.parent,
+                initial = {
+                    skill_level     = self.changes.skill_level,
+                    engine_depth    = self.changes.engine_depth,
+                    engine_movetime = self.changes.engine_movetime,
+                    blunder_chance  = self.changes.blunder_chance,
+                },
+                onSave = function(saved)
+                    -- Merge saved engine values back into our changes table
+                    self.changes.skill_level     = saved.skill_level
+                    self.changes.engine_depth    = saved.engine_depth
+                    self.changes.engine_movetime = saved.engine_movetime
+                    self.changes.blunder_chance  = saved.blunder_chance
+                    -- Apply immediately to parent and engine
+                    self:applyEngineChanges(saved)
+                end,
+            }
+            ew:show()
+        end,
+    }
+    self.engineButtonGroup = CenterContainer:new{
+        dimen = Geometry:new{ w = self.dialog.width, h = self.engineButton:getSize().h },
+        self.engineButton,
+    }
+end
+
+-- Apply only the engine-related fields (called from EngineWidget onSave)
+function SettingsWidget:applyEngineChanges(s)
+    local optSkill = self.engine.state.options["Skill Level"]
+    local v = math.max(0, math.min(20, tonumber(s.skill_level) or 0))
+    if optSkill then self.engine:setOption("Skill Level", tostring(v)) end
+    if self.parent then
+        self.parent.current_skill = v
+        self.parent.engine_movetime = math.max(1, math.min(10, tonumber(s.engine_movetime) or 1))
+        local d = tonumber(s.engine_depth) or 0
+        self.parent.engine_depth = (d >= 1 and d <= 3) and d or 0
+        local bc = math.max(0.0, math.min(1.0, tonumber(s.blunder_chance) or 0.0))
+        self.parent.blunder_chance = bc
+        if self.parent.weakening then self.parent.weakening:setChance(bc) end
+    end
+    if self.parent and self.parent.setSetting then
+        local p = self.parent
+        p:setSetting("skill_level",     v)
+        p:setSetting("engine_depth",    self.parent.engine_depth)
+        p:setSetting("engine_movetime", self.parent.engine_movetime)
+        p:setSetting("blunder_chance",  self.parent.blunder_chance)
+    end
 end
 
 -- ============================================================================
@@ -444,7 +435,7 @@ function SettingsWidget:assembleContent()
 
             VerticalSpan:new{ width = Size.padding.large },
 
-            -- Player type only if engine is ready
+            -- Player type + clock buttons (only if engine is ready)
             self.engine.state.uciok and CenterContainer:new{
                 dimen = Geometry:new{ w=D.width, h=self.playerSettingsGroup:getSize().h },
                 self.playerSettingsGroup
@@ -452,28 +443,21 @@ function SettingsWidget:assembleContent()
 
             self.engine.state.uciok and VerticalSpan:new{ width = Size.padding.large } or empty,
 
-            -- Skill only if engine is ready
+            -- Difficulty preset slider (only if engine ready)
             self.engine.state.uciok and CenterContainer:new{
-                dimen = Geometry:new{ w=D.width, h=self.skillSettingsGroup:getSize().h },
-                self.skillSettingsGroup
+                dimen = Geometry:new{ w=D.width, h=self.difficultyGroup:getSize().h },
+                self.difficultyGroup,
             } or VerticalSpan:new{ width = 0 },
 
             self.engine.state.uciok and VerticalSpan:new{ width = Size.padding.large } or empty,
 
-            -- Engine think time (only if engine ready)
+            -- Computer Engine button (only if engine ready)
             self.engine.state.uciok and CenterContainer:new{
-                dimen = Geometry:new{ w=D.width, h=self.moveTimeGroup:getSize().h },
-                self.moveTimeGroup
+                dimen = Geometry:new{ w=D.width, h=self.engineButton:getSize().h },
+                self.engineButton,
             } or VerticalSpan:new{ width = 0 },
 
             self.engine.state.uciok and VerticalSpan:new{ width = Size.padding.large } or empty,
-
-            -- Time controls
-            CenterContainer:new{
-                dimen = Geometry:new{ w=D.width, h=self.timeSettingsGroup:getSize().h },
-                self.timeSettingsGroup
-            },
-            VerticalSpan:new{ width = Size.padding.large },
 
             -- Buttons
             CenterContainer:new{
@@ -514,43 +498,23 @@ end
 --  APPLY: gather `self.changes`, perform any engine/timer updates, then callback
 -- ============================================================================
 function SettingsWidget:resetToDefaults()
-    self.changes.skill_level     = 2
+    self.changes.skill_level     = 0
+    self.changes.engine_depth    = 2
+    self.changes.blunder_chance  = 0.20
     self.changes.engine_movetime = 1
     self.changes.human_choice    = { [Chess.WHITE] = true, [Chess.BLACK] = false }
     self.changes.time_control    = {
         [Chess.WHITE] = { base_minutes = 15, incr_seconds = 10 },
         [Chess.BLACK] = { base_minutes = 15, incr_seconds = 10 },
     }
+    -- Also apply engine defaults immediately
+    self:applyEngineChanges(self.changes)
     self:applyAndClose()
 end
 function SettingsWidget:applyAndClose()
     local s = self.changes
 
-    -- 1) Skill Level (0..20)
-    local optSkill = self.engine.state.options["Skill Level"]
-    local v = tonumber(s.skill_level) or 2
-    v = math.max(0, math.min(20, v))
-
-    if optSkill then
-        self.engine:setOption("Skill Level", tostring(v))
-    end
-
-    if self.parent then
-        self.parent.current_skill = v
-    end
-    -- ELO strength (UCI_LimitStrength + UCI_Elo) - disabled by default
-    local optLimit = self.engine.state.options["UCI_LimitStrength"]
-    if optLimit and tostring(optLimit.value) ~= "false" then
-        self.engine:setOption("UCI_LimitStrength", "false")
-    end
-    -- If user changed ELO, apply it (requires UCI_LimitStrength=true)
-    -- Currently ELO mode is kept disabled; this just stores the preference.
-
-    if self.engine and self.engine.state.uciok then
-        self.engine.send("isready")
-    end
-
-    -- 2) Time controls
+    -- 1) Time controls
     local function applyTime(color)
         local baseOld = self.timer.base[color] / 60
         local incrOld = self.timer.increment[color]
@@ -566,24 +530,16 @@ function SettingsWidget:applyAndClose()
     applyTime(Chess.WHITE)
     applyTime(Chess.BLACK)
 
-    -- 3) Player types
+    -- 2) Player types
     for _, color in ipairs({Chess.WHITE, Chess.BLACK}) do
         if self.game.is_human(color) ~= s.human_choice[color] then
             self.game.set_human(color, s.human_choice[color])
         end
     end
 
-    -- 4) Engine think time
-    if self.parent then
-        self.parent.engine_movetime = math.max(1, math.min(10,
-            tonumber(s.engine_movetime) or 1))
-    end
-
-    -- 5) Persist all settings
+    -- 3) Persist time and player settings
     if self.parent and self.parent.setSetting then
         local p = self.parent
-        p:setSetting("skill_level",    v)
-        p:setSetting("engine_movetime", math.max(1, math.min(10, tonumber(s.engine_movetime) or 1)))
         p:setSetting("human_white",    s.human_choice[Chess.WHITE])
         p:setSetting("human_black",    s.human_choice[Chess.BLACK])
         local wc = s.time_control[Chess.WHITE]

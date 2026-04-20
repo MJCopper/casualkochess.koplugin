@@ -34,6 +34,7 @@ local ChessBoard = require("board")
 local Timer = require("timer")
 local Uci = require("uci")
 local SettingsWidget = require("settingswidget")
+local Weakening = require("weakening")
 local _ = require("gettext")
 
 local function getPluginPath()
@@ -185,9 +186,6 @@ function Kochess:startGame()
     self.last_cp = nil
     self.last_mate = nil
     self.eval_turn = nil
-    if self.engine_movetime == nil then
-        self.engine_movetime = self:getSetting("engine_movetime", 1)
-    end
 
     self:initializeGameLogic()
     self:initializeEngine()
@@ -274,10 +272,44 @@ end
 -- Initialize UCI engine
 function Kochess:initializeEngine()
 
-    local defaultSkill   = self:getSetting("skill_level", 2)
-    self.engine_movetime = self:getSetting("engine_movetime", 1)
-    self.human_white     = self:getSetting("human_white", true)
-    self.human_black     = self:getSetting("human_black", false)
+    -- Casual preset defaults
+    local CASUAL = {
+        skill_level     = 0,
+        engine_depth    = 2,
+        engine_movetime = 1,
+        blunder_chance  = 0.20,
+    }
+
+    -- Detect missing keys — if any engine setting is absent, write all
+    -- Casual defaults so older installs are migrated cleanly.
+    local missing = self.settings:readSetting("skill_level")    == nil
+                 or self.settings:readSetting("engine_depth")   == nil
+                 or self.settings:readSetting("engine_movetime") == nil
+                 or self.settings:readSetting("blunder_chance") == nil
+    if missing then
+        for k, v in pairs(CASUAL) do
+            self:setSetting(k, v)
+        end
+    end
+
+    local defaultSkill   = self:getSetting("skill_level",     CASUAL.skill_level)
+    self.current_skill   = defaultSkill
+    -- Only load these if not already set (e.g. from a previous session in memory)
+    if self.engine_movetime == nil then
+        self.engine_movetime = self:getSetting("engine_movetime", CASUAL.engine_movetime)
+    end
+    if self.engine_depth == nil then
+        self.engine_depth = self:getSetting("engine_depth", CASUAL.engine_depth)
+    end
+    if self.blunder_chance == nil then
+        self.blunder_chance = self:getSetting("blunder_chance", CASUAL.blunder_chance)
+    end
+    -- Keep weakening instance in sync in case blunder_chance was just loaded
+    if self.weakening then
+        self.weakening:setChance(self.blunder_chance)
+    end
+    self.human_white = self:getSetting("human_white", true)
+    self.human_black = self:getSetting("human_black", false)
     self.last_cp = nil
 
     if not UCI_ENGINE_PATH then
@@ -380,6 +412,9 @@ function Kochess:initializeGameLogic()
         {[Chess.WHITE]=incr_w, [Chess.BLACK]=incr_b},
         function() self:updateTimerDisplay() end)
     self.running = false
+    -- Weakening module: intercepts engine moves and optionally replaces with
+    -- a random legal move. Chance is loaded from settings (default 0 = off).
+    self.weakening = Weakening:new(self.game, self.blunder_chance or 0.0)
 end
 
 function Kochess:initializeBoard(board_h)
@@ -623,6 +658,10 @@ function Kochess:launchNextMove()
 end
 
 function Kochess:uciMove(str)
+    -- Optionally replace engine move with a random legal move
+    if self.weakening then
+        str = self.weakening:maybeWeaken(str)
+    end
     local m = self.game.move({from=str:sub(1,2), to=str:sub(3,4), promotion=(#str==5 and str:sub(5,5) or nil)})
     if m then self.board:handleGameMove(m) end
 end
@@ -646,12 +685,17 @@ function Kochess:launchUCI()
     local wtime = math.max(100, self.timer:getRemainingTime(Chess.WHITE) * 1000)
     local btime = math.max(100, self.timer:getRemainingTime(Chess.BLACK) * 1000)
 
+    -- Apply depth limit if configured (1-3); 0 means unlimited
+    local d = tonumber(self.engine_depth) or 0
+    local depth_limit = (d >= 1 and d <= 3) and d or nil
+
     self.engine:go({
         wtime    = wtime,
         btime    = btime,
         winc     = self.timer.increment[Chess.WHITE] * 1000,
         binc     = self.timer.increment[Chess.BLACK] * 1000,
         movetime = movetime_ms,
+        depth    = depth_limit,
     })
 end
 
