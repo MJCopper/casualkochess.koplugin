@@ -128,6 +128,28 @@ local Kochess = FrameContainer:extend{
     pgn_log = nil, status_bar = nil, running = false,
 }
 
+function Kochess:onCloseWidget()
+    -- Clear any board state when widget is closed
+    if self.board then
+        self.board:clearValidMoves()
+    end
+end
+
+function Kochess:handleEvent(event)
+    -- Block all event handling when we are not currently shown as a
+    -- top-level widget. Without this, the plugin receives events via
+    -- FileManager's child propagation even after UIManager:close().
+    local on_stack = false
+    for i = #UIManager._window_stack, 1, -1 do
+        if UIManager._window_stack[i].widget == self then
+            on_stack = true
+            break
+        end
+    end
+    if not on_stack then return false end
+    return FrameContainer.handleEvent(self, event)
+end
+
 function Kochess:init()
     self.dimensions = Geometry:new{ w = self.full_width, h = self.full_height }
     self.covers_fullscreen = true
@@ -169,10 +191,15 @@ function Kochess:installIconsIfNeeded()
     local data_dir = DataStorage:getDataDir()
     local dest_dir = data_dir .. "/resources/icons/casualchess"
     local src_dir  = PLUGIN_PATH .. "icons"
-
-    if lfs.attributes(dest_dir, "mode") ~= "directory" then
-        mkdir_p(data_dir .. "/resources/icons/casualchess")
-        os.execute('cp -r "' .. src_dir .. '/." "' .. dest_dir .. '"')
+    if lfs.attributes(src_dir, "mode") ~= "directory" then return end
+    mkdir_p(dest_dir)
+    for entry in lfs.dir(src_dir) do
+        if entry:match("%.svg$") then
+            local dest_file = dest_dir .. "/" .. entry
+            if lfs.attributes(dest_file, "mode") ~= "file" then
+                os.execute('cp "' .. src_dir .. "/" .. entry .. '" "' .. dest_file .. '"')
+            end
+        end
     end
 end
 
@@ -195,6 +222,9 @@ function Kochess:startGame()
     self:updatePlayerDisplay()
     self:restoreGameState()  -- load saved PGN/timers if available
     self.board:updateBoard()
+    -- Ensure we're not already on the stack before showing (prevents duplicate
+    -- entries that cause ghost gesture handlers after closing)
+    UIManager:close(self)
     UIManager:show(self)
 end
 
@@ -419,11 +449,13 @@ end
 
 function Kochess:initializeBoard(board_h)
     self.board = ChessBoard:new{
-        game = self.game,
-        width = self.full_width,
-        height = board_h or math.floor(0.7 * self.full_height),
-        moveCallback = function(move) self:onMoveExecuted(move) end,
+        game          = self.game,
+        width         = self.full_width,
+        height        = board_h or math.floor(0.7 * self.full_height),
+        moveCallback  = function(move) self:onMoveExecuted(move) end,
         onPromotionNeeded = function(f, t, c) self:openPromotionDialog(f, t, c) end,
+        learning_mode = self:getSetting("learning_mode", false),
+        show_selected = self:getSetting("show_selected", true),
     }
 end
 

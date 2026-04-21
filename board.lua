@@ -9,6 +9,9 @@ local Device = require("device")
 local Screen = Device.screen
 local UIManager = require("ui/uimanager")
 
+local OverlapGroup = require("ui/widget/overlapgroup")
+local IconWidget   = require("ui/widget/iconwidget")
+
 local BOARD_SIZE = 8
 local SELECTED_BORDER = 5
 
@@ -32,8 +35,10 @@ local Board = FrameContainer:extend{
     bordersize = 0,
     padding = 0,
     background = Blitbuffer.COLOR_WHITE,
-    -- Padding around the board (top, left, right only — bottom flush with log)
-    board_padding = nil,  -- set in init from Screen:scaleBySize(8)
+    board_padding = nil,
+    learning_mode  = false,
+    show_selected  = true,
+    _hint_squares  = nil,
 }
 
 function Board:getSize()
@@ -162,30 +167,35 @@ function Board:handleClick(file, rank)
         if self.selected == square then
             -- deselect
             self:unmarkSelected(square)
+            self:clearValidMoves()
             self.selected = nil
 
         elseif is_my_piece then
             -- switch selection
             self:unmarkSelected(self.selected)
+            self:clearValidMoves()
             self.selected = square
             self:markSelected(square)
+            self:markValidMoves(square)
 
         else
             -- attempt move
+            self:clearValidMoves()
             self:handleMove(self.selected, square)
         end
     else
         -- select piece
         if is_my_piece then
-
             self.selected = square
             self:markSelected(square)
+            self:markValidMoves(square)
         end
     end
 end
 
 function Board:handleMove(from, to)
-    self.selected = nil 
+    self.selected = nil
+    self:clearValidMoves()
 
     local piece = self.game.get(from) 
 
@@ -256,28 +266,108 @@ function Board:handleMoveFlags(move, to)
 end
 
 -- Visual updates
+-- ---------------------------------------------------------------------------
+-- Overlay helpers: place/remove an SVG icon on top of a button's content.
+-- We wrap button[1][1] (the label_container's child, i.e. the label_widget)
+-- in an OverlapGroup so the overlay renders above the piece/empty icon.
+-- button structure: Button → frame(FrameContainer) → label_container → label_widget
+-- ---------------------------------------------------------------------------
+local function overlayIcon(button, icon_name, w, h)
+    local label_container = button.frame[1]
+    if not label_container then return end
+    local orig = label_container[1]
+    if not orig then return end
+    -- Don't double-wrap
+    if orig._is_overlay then return end
+    local overlay = IconWidget:new{
+        icon        = icon_name,
+        alpha       = true,
+        width       = w,
+        height      = h,
+        is_icon     = true,
+    }
+    local og = OverlapGroup:new{
+        dimen       = Geom:new{ w = w, h = h },
+        orig,
+        overlay,
+    }
+    og._is_overlay  = true
+    og._orig_widget = orig
+    label_container[1] = og
+end
+
+local function clearOverlay(button)
+    local label_container = button.frame[1]
+    if not label_container then return end
+    local og = label_container[1]
+    if og and og._is_overlay then
+        label_container[1] = og._orig_widget
+    end
+end
+
 function Board:markSelected(square)
     local id_result = Board.chessToId(square)
     if not id_result then return end
+    -- show_selected controls the overlay; learning_mode implies it
+    if not self.show_selected and not self.learning_mode then return end
     local button = self.table:getButtonById(id_result)
-
-    button.frame.background = Blitbuffer.COLOR_WHITE
-    button.frame.border_color = Blitbuffer.COLOR_BLACK
-
-    UIManager:setDirty(self, "ui")
+    overlayIcon(button, "casualchess/select", self.button_size, self.icon_height)
+    UIManager:setDirty("all", "ui")
 end
 
 function Board:unmarkSelected(square)
     local id_result = Board.chessToId(square)
     if not id_result then return end
     local button = self.table:getButtonById(id_result)
+    clearOverlay(button)
+    UIManager:setDirty("all", "ui")
+end
 
-    -- restore original square color
-    local original_color = Board.positionToColor(square)
-    button.frame.background = original_color
-    button.frame.border_color = original_color
+-- ---------------------------------------------------------------------------
+-- Learning mode: overlay hint icon on valid move squares
+-- ---------------------------------------------------------------------------
+function Board:markValidMoves(square)
+    self._hint_squares = {}
+    -- learning_mode implies show_selected — ensure selected square is marked
+    if self.learning_mode and not self.show_selected then
+        local id_result = Board.chessToId(square)
+        if id_result then
+            overlayIcon(self.table:getButtonById(id_result),
+                "casualchess/select", self.button_size, self.icon_height)
+        end
+    end
+    if not self.learning_mode then return end
+    local legal = self.game.moves({ verbose = true, square = square })
+    if not legal or #legal == 0 then return end
+    for _, m in ipairs(legal) do
+        local target = m.to
+        local id_result = Board.chessToId(target)
+        if id_result then
+            local button = self.table:getButtonById(id_result)
+            overlayIcon(button, "casualchess/hint", self.button_size, self.icon_height)
+            table.insert(self._hint_squares, target)
+        end
+    end
+    UIManager:setDirty("all", "ui")
+end
 
-    UIManager:setDirty(self, "ui")
+function Board:clearValidMoves()
+    if not self._hint_squares then return end
+    -- if learning_mode implied the selection overlay, clear it too
+    if self.learning_mode and not self.show_selected and self.selected then
+        local id_result = Board.chessToId(self.selected)
+        if id_result then
+            clearOverlay(self.table:getButtonById(id_result))
+        end
+    end
+    for _, square in ipairs(self._hint_squares) do
+        local id_result = Board.chessToId(square)
+        if id_result then
+            clearOverlay(self.table:getButtonById(id_result))
+        end
+    end
+    self._hint_squares = {}
+    UIManager:setDirty("all", "ui")
 end
 
 function Board:placePiece(square, piece, color)

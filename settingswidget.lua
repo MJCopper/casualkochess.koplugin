@@ -106,6 +106,8 @@ function SettingsWidget:initializeState()
         engine_depth    = (self.parent and self.parent.engine_depth) or 2,
         engine_movetime = (self.parent and self.parent.engine_movetime) or 1,
         blunder_chance  = (self.parent and self.parent.blunder_chance) or 0.20,
+        learning_mode   = (self.parent and self.parent.board and self.parent.board.learning_mode == true) or false,
+        show_selected   = not (self.parent and self.parent.board and self.parent.board.show_selected == false),
         time_control = {
             [Chess.WHITE] = {
                 base_minutes  = self.timer.base[Chess.WHITE] / 60,
@@ -134,6 +136,7 @@ function SettingsWidget:show()
     self.dialog = dlg
 
     self:buildPlayerTypeGroup()
+    self:buildCheckboxes()
     self:buildDifficultyGroup()
     self:buildEngineButton()
     self:assembleContent()
@@ -242,6 +245,71 @@ function SettingsWidget:buildPlayerTypeGroup()
     }
 end
 
+
+-- ============================================================================
+--  CHECKBOX SETTINGS
+-- ============================================================================
+function SettingsWidget:buildCheckboxes()
+    local w = self.dialog.element_width
+
+    local function makeCheckbox(label_text, get, set)
+        local function label()
+            return (get() and "☑ " or "☐ ") .. label_text
+        end
+        local btn
+        btn = ButtonWidget:new{
+            text    = label(),
+            width   = w,
+            radius  = Size.radius.button,
+            padding = Size.padding.small,
+            align   = "left",
+            callback = function()
+                set(not get())
+                btn.text = label()
+                btn:init()
+                self:markDirty()
+                UIManager:setDirty(self.parent, "ui")
+            end,
+        }
+        return btn
+    end
+
+    self.showSelectedButton = makeCheckbox(
+        _("Highlight Selected"),
+        function() return self.changes.show_selected end,
+        function(v)
+            self.changes.show_selected = v
+            if self.parent and self.parent.board then
+                self.parent.board.show_selected = v
+                -- clear any visible selection overlay if turning off
+                if not v and self.parent.board.selected then
+                    self.parent.board:unmarkSelected(self.parent.board.selected)
+                end
+            end
+        end
+    )
+
+    self.learningModeButton = makeCheckbox(
+        _("Learning Hints"),
+        function() return self.changes.learning_mode end,
+        function(v)
+            self.changes.learning_mode = v
+            if self.parent and self.parent.board then
+                self.parent.board.learning_mode = v
+                if not v then
+                    self.parent.board:clearValidMoves()
+                end
+            end
+        end
+    )
+
+    self.checkboxGroup = VerticalGroup:new{
+        width = w,
+        self.showSelectedButton,
+        VerticalSpan:new{ width = Size.padding.small },
+        self.learningModeButton,
+    }
+end
 
 -- ============================================================================
 --  DIFFICULTY PRESETS
@@ -443,6 +511,14 @@ function SettingsWidget:assembleContent()
 
             self.engine.state.uciok and VerticalSpan:new{ width = Size.padding.large } or empty,
 
+            -- Learning mode toggle (always shown)
+            CenterContainer:new{
+                dimen = Geometry:new{ w=D.width, h=self.checkboxGroup:getSize().h },
+                self.checkboxGroup,
+            },
+
+            VerticalSpan:new{ width = Size.padding.large },
+
             -- Difficulty preset slider (only if engine ready)
             self.engine.state.uciok and CenterContainer:new{
                 dimen = Geometry:new{ w=D.width, h=self.difficultyGroup:getSize().h },
@@ -502,12 +578,13 @@ function SettingsWidget:resetToDefaults()
     self.changes.engine_depth    = 2
     self.changes.blunder_chance  = 0.20
     self.changes.engine_movetime = 1
+    self.changes.learning_mode   = false
+    self.changes.show_selected   = true
     self.changes.human_choice    = { [Chess.WHITE] = true, [Chess.BLACK] = false }
     self.changes.time_control    = {
         [Chess.WHITE] = { base_minutes = 15, incr_seconds = 10 },
         [Chess.BLACK] = { base_minutes = 15, incr_seconds = 10 },
     }
-    -- Also apply engine defaults immediately
     self:applyEngineChanges(self.changes)
     self:applyAndClose()
 end
@@ -537,11 +614,13 @@ function SettingsWidget:applyAndClose()
         end
     end
 
-    -- 3) Persist time and player settings
+    -- 3) Persist time, player, and learning mode settings
     if self.parent and self.parent.setSetting then
         local p = self.parent
         p:setSetting("human_white",    s.human_choice[Chess.WHITE])
         p:setSetting("human_black",    s.human_choice[Chess.BLACK])
+        p:setSetting("learning_mode",  s.learning_mode and true or false)
+        p:setSetting("show_selected",  s.show_selected and true or false)
         local wc = s.time_control[Chess.WHITE]
         local bc = s.time_control[Chess.BLACK]
         p:setSetting("time_base_white", wc.base_minutes * 60)
