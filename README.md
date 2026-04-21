@@ -2,7 +2,7 @@
 
 I made this plugin for my own specific use case, it is only tested on my personal Kobo Clara BW. So use it at your own risk. Thought it would be worth making this code available for others interest.
 
-Work-In-Progress casual chess plugin for KOReader, designed for Kobo (and maybe other e-ink devices).
+Casual chess plugin for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
 It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 **Author:** MJCopper  
@@ -20,6 +20,7 @@ It has been derived from the work by Baptiste Fouques & Victor Fariña
 - Adjustable computer think time (1–10 seconds)
 - Adjustable computer search depth (1-ThinkTime)
 - Adjustable blunder chance (0%-100%), Creates the possibilty for Stockfish to makes mistakes, plays more like a casual human.
+- Learning hints, shows valid moves for selected piece.
 - Chess clock with configurable time controls per player (base time + increment)
 - Opening detection with ECO code display
 - Position evaluation display
@@ -33,7 +34,7 @@ It has been derived from the work by Baptiste Fouques & Victor Fariña
    - Kobo: `/mnt/onboard/.adds/koreader/plugins/`
 
 2. Copy the appropriate Stockfish binary into `casualkochess.koplugin/engines/`:
-   - Kobo: a compatible `stockfish` binary is included, this step can be skipped
+   - Kobo and other ARM e-ink readers: a compatible `stockfish` ARM binary is included, this step can be skipped
 
 3. Restart KOReader. The plugin appears in the main menu as **Casual Chess**.
 
