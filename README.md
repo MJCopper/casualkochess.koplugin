@@ -6,7 +6,7 @@ Casual chess plugin for KOReader, designed for Kobo and other ARM e-ink devices 
 It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 **Author:** MJCopper  
-**Version:** 0.1.1  
+**Version:** 0.1.3  
 **License:** GPL v3  
 **Based on:** kochess by its original author's Baptiste Fouques & Victor Fariña
 
