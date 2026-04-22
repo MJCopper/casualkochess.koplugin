@@ -5,6 +5,8 @@ I made this plugin for my own specific use case, it is only tested on my persona
 Casual chess plugin for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
 It has been derived from the work by Baptiste Fouques & Victor Fariña
 
+https://github.com/MJCopper/casualkochess.koplugin/releases/download/v0.1.3/casualkochess.koplugin.v0.1.3.zip
+
 **Author:** MJCopper  
 **Version:** 0.1.3  
 **License:** GPL v3  
