@@ -128,6 +128,11 @@ local Kochess = FrameContainer:extend{
     pgn_log = nil, status_bar = nil, running = false,
 }
 
+function Kochess:onCasualChessStart()
+    self:startGame()
+    return true
+end
+
 function Kochess:onCloseWidget()
     -- Clear any board state when widget is closed
     if self.board then
@@ -136,7 +141,12 @@ function Kochess:onCloseWidget()
 end
 
 function Kochess:handleEvent(event)
-    -- Block all event handling when we are not currently shown as a
+    -- CasualChessStart must bypass the stack guard — it is fired by the
+    -- Dispatcher when the game is closed (not on stack) to launch the game.
+    if event.handler == "onCasualChessStart" then
+        return self:onCasualChessStart()
+    end
+    -- Block all other event handling when we are not currently shown as a
     -- top-level widget. Without this, the plugin receives events via
     -- FileManager's child propagation even after UIManager:close().
     local on_stack = false
@@ -154,7 +164,7 @@ function Kochess:init()
     self.dimensions = Geometry:new{ w = self.full_width, h = self.full_height }
     self.covers_fullscreen = true
     Dispatcher:registerAction("casualkochess", {
-        category = "none", event = "CasualChessStart", title = _("Casual KO Chess"), general = true,
+        category = "none", event = "CasualChessStart", title = _("Casual Chess"), general = true,
     })
     self.ui.menu:registerToMainMenu(self)
     self:installIconsIfNeeded()
@@ -404,7 +414,25 @@ function Kochess:initializeEngine()
         self.current_skill = defaultSkill
 
         self.engine:ucinewgame()
-        self.engine.send("isready")
+
+        -- If we restored a CvC game that was in progress, sync the position
+        -- and resume. restoreGameState() ran before uciok fired so the game
+        -- state is already loaded; the engine just wasn't ready yet.
+        local is_cvc = not self.game.is_human(Chess.WHITE) and not self.game.is_human(Chess.BLACK)
+        if is_cvc and self.running then
+            local moves = {}
+            for _, m in ipairs(self.game.history({ verbose = true })) do
+                moves[#moves+1] = m.from .. m.to .. (m.promotion or "")
+            end
+            if #moves > 0 then
+                self.engine:position({ moves = table.concat(moves, " ") })
+            end
+            self.engine.send("isready")
+            self:launchNextMove()
+        else
+            self.engine.send("isready")
+        end
+
         UIManager:setDirty(self, "ui")
     end)
 
@@ -686,7 +714,27 @@ end
 function Kochess:launchNextMove()
     self.timer:switchPlayer()
     self:updateTimerDisplay()
-    if self.engine and self.engine.state.uciok and not self.game.is_human(self.game.turn()) then self:launchUCI() end
+    if not (self.engine and self.engine.state.uciok and not self.game.is_human(self.game.turn())) then return end
+
+    -- When both sides are computer, insert a 1-second pause so UIManager can
+    -- drain user input (close dialogs, settings taps, etc.) before the next
+    -- engine search starts. Without the pause the polling loop re-queues so
+    -- fast that user gestures are never serviced, locking the UI.
+    local is_cvc = not self.game.is_human(Chess.WHITE) and not self.game.is_human(Chess.BLACK)
+    if not is_cvc then
+        -- At least one human side: no delay needed, fire immediately.
+        self:launchUCI()
+    else
+        -- Computer vs Computer: schedule with a token so we can cancel if the
+        -- user resets, undoes, or closes before the delay expires.
+        local token = {}
+        self._pending_launch = token
+        UIManager:scheduleIn(1, function()
+            if self._pending_launch ~= token then return end  -- cancelled
+            self._pending_launch = nil
+            self:launchUCI()
+        end)
+    end
 end
 
 function Kochess:uciMove(str)
@@ -731,7 +779,10 @@ function Kochess:launchUCI()
     })
 end
 
-function Kochess:stopUCI() if self.engine and self.engine.state.uciok then self.engine.send("stop") end end
+function Kochess:stopUCI()
+    self._pending_launch = nil  -- cancel any CvC inter-move delay
+    if self.engine and self.engine.state.uciok then self.engine.send("stop") end
+end
 
 function Kochess:updatePgnLog()
     local moves = self.game:history()
