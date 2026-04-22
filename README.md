@@ -14,7 +14,7 @@ It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 ## Download
 
-https://github.com/MJCopper/casualkochess.koplugin/releases/download/v0.1.3/casualkochess.koplugin.v0.1.3.zip
+https://github.com/MJCopper/casualkochess.koplugin/releases/download/v0.1.5/casualkochess.koplugin.v0.1.5.zip
 
 ---
 
