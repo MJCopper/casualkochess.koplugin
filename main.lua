@@ -9,7 +9,11 @@ local Size = require("ui/size")
 local Geometry = require("ui/geometry")
 local DataStorage = require("datastorage")
 local LuaSettings  = require("luasettings")
+local util = require("util")
 local json = require("json")
+
+-- IconWidget snapshots the user icon directory at require time.
+pcall(function() util.makePath(DataStorage:getDataDir() .. "/icons") end)
 
 local CenterContainer = require("ui/widget/container/centercontainer")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -138,6 +142,7 @@ function Kochess:onCloseWidget()
     if self.board then
         self.board:clearValidMoves()
     end
+    self:shutdownEngine()
 end
 
 function Kochess:handleEvent(event)
@@ -186,23 +191,12 @@ function Kochess:setSetting(key, value)
     self:saveSettings()
 end
 
-local function mkdir_p(path)
-    local sep = package.config:sub(1,1)
-    local cur = ""
-    for part in path:gmatch("[^" .. sep .. "]+") do
-        cur = (cur == "") and part or (cur .. sep .. part)
-        if lfs.attributes(cur, "mode") ~= "directory" then
-            lfs.mkdir(cur)
-        end
-    end
-end
-
 function Kochess:installIconsIfNeeded()
     local data_dir = DataStorage:getDataDir()
-    local dest_dir = data_dir .. "/resources/icons/casualchess"
+    local dest_dir = data_dir .. "/icons/casualchess"
     local src_dir  = PLUGIN_PATH .. "icons"
     if lfs.attributes(src_dir, "mode") ~= "directory" then return end
-    mkdir_p(dest_dir)
+    util.makePath(dest_dir)
     for entry in lfs.dir(src_dir) do
         if entry:match("%.svg$") then
             local dest_file = dest_dir .. "/" .. entry
@@ -224,6 +218,11 @@ function Kochess:startGame()
     self.last_mate = nil
     self.eval_turn = nil
 
+    -- Close any previous visible instance before creating a fresh engine.
+    if UIManager.isWidgetShown and UIManager:isWidgetShown(self) then
+        UIManager:close(self)
+    end
+
     self:initializeGameLogic()
     self:initializeEngine()
     self:loadOpenings()
@@ -232,9 +231,6 @@ function Kochess:startGame()
     self:updatePlayerDisplay()
     self:restoreGameState()  -- load saved PGN/timers if available
     self.board:updateBoard()
-    -- Ensure we're not already on the stack before showing (prevents duplicate
-    -- entries that cause ghost gesture handlers after closing)
-    UIManager:close(self)
     UIManager:show(self)
 end
 
@@ -697,12 +693,9 @@ function Kochess:onMoveExecuted(move)
         end
     end
 
-    -- checkmate: show dialog and stop
-    local san = tostring(move.san or "")
-    if san:find("#", 1, true) then
-        -- turn already flipped; winner is the side that just moved
-        local winner_color = (self.game.turn() == Chess.WHITE) and Chess.BLACK or Chess.WHITE
-        self:showMateDialog(winner_color)
+    local is_over, result, reason = self.game.game_over()
+    if is_over then
+        self:showGameOverDialog(result, reason)
         UIManager:setDirty(self, "ui")
         return
     end
@@ -781,7 +774,17 @@ end
 
 function Kochess:stopUCI()
     self._pending_launch = nil  -- cancel any CvC inter-move delay
-    if self.engine and self.engine.state.uciok then self.engine.send("stop") end
+    self.engine_busy = false
+    if self.engine and not self.engine.closed and self.engine.state.uciok then self.engine.send("stop") end
+end
+
+function Kochess:shutdownEngine()
+    self._pending_launch = nil
+    self.engine_busy = false
+    if self.engine and not self.engine.closed then
+        self.engine:quit()
+    end
+    self.engine = nil
 end
 
 function Kochess:updatePgnLog()
@@ -824,11 +827,38 @@ function Kochess:resetGame()
     self:updateTimerDisplay(); self:updatePlayerDisplay(); self.board:updateBoard(); UIManager:setDirty(self, "ui")
 end
 
-function Kochess:showMateDialog(winner_color)
-    local winner = (winner_color == Chess.WHITE) and _("White") or _("Black")
+function Kochess:showGameOverDialog(result, reason)
+    local text
+    if result == "1-0" or result == "0-1" then
+        local winner = (result == "1-0") and _("White") or _("Black")
+        text = string.format(_("Checkmate! %s wins."), winner)
+    else
+        local label
+        if not reason then
+            text = _("Draw!")
+        elseif reason == "Stalemate" then
+            label = _("Stalemate")
+        elseif reason == "Insufficient material" then
+            label = _("Insufficient material")
+        elseif reason == "Threefold repetition" then
+            label = _("Threefold repetition")
+        elseif reason == "Fifty-move rule" then
+            label = _("Fifty-move rule")
+        else
+            label = reason
+        end
+        if label then
+            text = string.format(_("Draw! %s."), label)
+        end
+    end
+
+    self:stopUCI()
+    self.timer:stop()
+    self.running = false
+    self:updateTimerDisplay()
 
     UIManager:show(ConfirmBox:new{
-        text = string.format(_("Checkmate!\n%s wins."), winner),
+        text = text,
         ok_text = _("Continue"),
         cancel_text = nil,
         ok_callback = function()
@@ -878,7 +908,6 @@ function Kochess:createStatusBar()
                 ok_text     = _("Exit"),
                 ok_callback = function()
                     self.timer:stop()
-                    if self.engine then self.engine:stop() end
                     self:saveGameState()
                     UIManager:close(self, "full")
                 end,

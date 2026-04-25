@@ -317,7 +317,7 @@ end
 function SettingsWidget:buildDifficultyGroup()
     local w = self.dialog.element_width
 
-    local PRESETS = {
+    self.difficultyPresets = {
         {
             name          = _("Beginner"),
             skill_level   = 0,
@@ -359,33 +359,10 @@ function SettingsWidget:buildDifficultyGroup()
             elo           = 2832,
         },
     }
-
-    -- Find which preset (if any) matches current settings
-    local function currentPos()
-        for i, p in ipairs(PRESETS) do
-            if p.skill_level    == self.changes.skill_level
-            and p.engine_depth  == self.changes.engine_depth
-            and p.engine_movetime == self.changes.engine_movetime
-            and math.abs((p.blunder_chance or 0) - (self.changes.blunder_chance or 0)) < 0.01
-            then
-                return i
-            end
-        end
-        return nil  -- custom / no match
-    end
-
-    local function difficultyLabel()
-        local pos = currentPos()
-        if pos then
-            local p = PRESETS[pos]
-            return p.name .. "  ELO: ~" .. tostring(p.elo)
-        else
-            return _("Custom")
-        end
-    end
+    local PRESETS = self.difficultyPresets
 
     self.difficultyLabelWidget = TextWidget:new{
-        text = difficultyLabel(),
+        text = self:getDifficultyLabel(),
         face = Font:getFace("cfont", 22),
     }
 
@@ -397,19 +374,19 @@ function SettingsWidget:buildDifficultyGroup()
         self.changes.engine_movetime = p.engine_movetime
         self.changes.blunder_chance  = p.blunder_chance
         self:applyEngineChanges(self.changes)
-        self.difficultyLabelWidget:setText(difficultyLabel())
+        self:refreshDifficultyLabel()
         self:markDirty()
         UIManager:setDirty(self.parent, "ui")
     end
 
-    local cur = currentPos() or 1
+    local cur = self:getCurrentDifficultyPosition() or 1
     self.difficultyProgress = ButtonProgressWidget:new{
         width       = w,
         num_buttons = #PRESETS,
         position    = cur,
         fine_tune   = true,
         callback    = function(pos)
-            local p = currentPos() or 1
+            local p = self:getCurrentDifficultyPosition() or 1
             if pos == "+" then p = math.min(#PRESETS, p + 1)
             elseif pos == "-" then p = math.max(1, p - 1)
             else p = pos end
@@ -425,6 +402,41 @@ function SettingsWidget:buildDifficultyGroup()
         self.difficultyProgress,
     }
 end
+
+function SettingsWidget:getCurrentDifficultyPosition()
+    for i, p in ipairs(self.difficultyPresets or {}) do
+        if p.skill_level == self.changes.skill_level
+        and p.engine_depth == self.changes.engine_depth
+        and p.engine_movetime == self.changes.engine_movetime
+        and math.abs((p.blunder_chance or 0) - (self.changes.blunder_chance or 0)) < 0.01
+        then
+            return i
+        end
+    end
+end
+
+function SettingsWidget:getDifficultyLabel()
+    local pos = self:getCurrentDifficultyPosition()
+    if pos then
+        local p = self.difficultyPresets[pos]
+        return p.name .. "  ELO: ~" .. tostring(p.elo)
+    end
+
+    local elo = EngineWidget.computeElo(
+        tonumber(self.changes.skill_level) or 0,
+        tonumber(self.changes.engine_depth) or 0,
+        tonumber(self.changes.engine_movetime) or 1,
+        tonumber(self.changes.blunder_chance) or 0
+    )
+    return _("Custom ELO") .. ": ~" .. tostring(elo)
+end
+
+function SettingsWidget:refreshDifficultyLabel()
+    if self.difficultyLabelWidget then
+        self.difficultyLabelWidget:setText(self:getDifficultyLabel())
+    end
+end
+
 function SettingsWidget:buildEngineButton()
     local w = self.dialog.element_width
     self.engineButton = ButtonWidget:new{
@@ -450,6 +462,9 @@ function SettingsWidget:buildEngineButton()
                     self.changes.blunder_chance  = saved.blunder_chance
                     -- Apply immediately to parent and engine
                     self:applyEngineChanges(saved)
+                    self:refreshDifficultyLabel()
+                    self:markDirty()
+                    UIManager:setDirty(self.parent, "ui")
                 end,
             }
             ew:show()

@@ -16,6 +16,7 @@ function Chess:new()
         [instance.BLACK] = false,  -- Computer plays Black by default
     }
     instance.redo_stack = {}
+    local replaying_redo = false
     instance.set_human = function(color, isHuman)
         assert(color == instance.WHITE or color == instance.BLACK,
                "Invalid color: " .. tostring(color))
@@ -26,6 +27,18 @@ function Chess:new()
         assert(color == instance.WHITE or color == instance.BLACK,
                "Invalid color: " .. tostring(color))
         return instance.human_player[color]
+    end
+
+    local _move = instance.move
+    instance.move = function(move, options)
+        if move == instance then
+            move, options = options, nil
+        end
+        local result = _move(move, options)
+        if result and not replaying_redo then
+            instance.redo_stack = {}
+        end
+        return result
     end
 
     -- override undo: call base, push onto redo_stack
@@ -42,10 +55,13 @@ function Chess:new()
     -- redo: pop from redo_stack and re-apply
     instance.redo = function()
         local _move = table.remove(instance.redo_stack)
+        local result
         if _move then
-            instance.move(_move)
+            replaying_redo = true
+            result = instance.move(_move)
+            replaying_redo = false
         end
-        return _move
+        return result
     end
 
     instance.redo_history = function()
@@ -53,10 +69,10 @@ function Chess:new()
     end
 
     -- override reset: clear redo stack, then call base
-    _reset = instance.reset
-    function Chess:reset()
+    local _reset = instance.reset
+    instance.reset = function()
         instance.redo_stack = {}
-        _reset(self)
+        return _reset()
     end
 
     setmetatable(instance, Chess)

@@ -192,4 +192,10 @@ function Utils.writer(fd)
     end
 end
 
+function Utils.closeFd(fd)
+    if fd then
+        C.close(fd)
+    end
+end
+
 return Utils

@@ -67,6 +67,7 @@ end
 -- ---------------------------------------------------------------------------
 local EngineWidget = {}
 EngineWidget.__index = EngineWidget
+EngineWidget.computeElo = computeElo
 
 -- opts:
 --   engine        = UCI engine instance

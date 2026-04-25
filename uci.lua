@@ -74,18 +74,25 @@ function UCIEngine.spawn(cmd, args)
     }
 
     -- Build the non-blocking reader closure
-    self._reader = Utils.reader(
+    local _reader = Utils.reader(
         self.fd_read,
         function(line)
             parse_uci_line(line, self.state)
             self:_trigger("read", line)
         end
     )
+    self._reader = function()
+        if not self.closed then
+            _reader()
+        end
+    end
 
     -- Build the writer closure
     local _write = Utils.writer(self.fd_write)
+    self._write = _write
     self.send = function(data)
-        _write(tostring(data))
+        if self.closed then return false end
+        return _write(tostring(data))
     end
 
     return self
@@ -120,6 +127,7 @@ function UCIEngine:uci()
 
     Utils.pollingLoop(0.25, self._reader, function()
         ticks_left = ticks_left - 1
+        if self.closed then return false end
         if self.state.uciok then return false end  -- done
         if ticks_left <= 0 then return false end
         return true  -- keep polling
@@ -184,12 +192,22 @@ function UCIEngine:go(opts)
     -- Poll until bestmove arrives; no timeout needed here since movetime
     -- is set in the go command itself (engine will always reply).
     Utils.pollingLoop(0.25, self._reader, function()
-        return not self.state.bestmove
+        return not self.closed and not self.state.bestmove
     end)
 end
 
 function UCIEngine:stop()
     self.send("stop")
+end
+
+function UCIEngine:quit()
+    if self.closed then return end
+    self._write("quit")
+    self.closed = true
+    Utils.closeFd(self.fd_write)
+    Utils.closeFd(self.fd_read)
+    self.fd_write = nil
+    self.fd_read = nil
 end
 
 M.UCIEngine = UCIEngine
