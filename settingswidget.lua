@@ -94,6 +94,7 @@ function SettingsWidget:initializeState()
         previous_move_hints = (self.parent and self.parent.board and self.parent.board.previous_move_hints == true) or false,
         opponent_hints = (self.parent and self.parent.board and self.parent.board.opponent_hints == true) or false,
         check_hints = (self.parent and self.parent.board and self.parent.board.check_hints == true) or false,
+        rotate_top_pieces = (self.parent and self.parent.board and self.parent.board.rotate_top_pieces == true) or false,
         time_control = {
             [Chess.WHITE] = {
                 base_minutes  = self.timer.base[Chess.WHITE] / 60,
@@ -454,6 +455,7 @@ function SettingsWidget:buildInterfaceButton()
                     previous_move_hints = self.changes.previous_move_hints,
                     opponent_hints = self.changes.opponent_hints,
                     check_hints = self.changes.check_hints,
+                    rotate_top_pieces = self.changes.rotate_top_pieces,
                 },
                 onSave = function(saved)
                     self.changes.show_selected = saved.show_selected
@@ -461,6 +463,7 @@ function SettingsWidget:buildInterfaceButton()
                     self.changes.previous_move_hints = saved.previous_move_hints
                     self.changes.opponent_hints = saved.opponent_hints
                     self.changes.check_hints = saved.check_hints
+                    self.changes.rotate_top_pieces = saved.rotate_top_pieces
                     self:applyInterfaceChanges(saved)
                     self:markDirty()
                     UIManager:setDirty(self.parent, "ui")
@@ -479,6 +482,7 @@ function SettingsWidget:applyInterfaceChanges(s)
         board.previous_move_hints = s.previous_move_hints and true or false
         board.opponent_hints = s.opponent_hints and true or false
         board.check_hints = s.check_hints and true or false
+        board:setRotateTopPieces(s.rotate_top_pieces and true or false)
         if not board.learning_mode then
             board:clearValidMoves()
             board:clearPreviousMoveHints()
@@ -499,6 +503,7 @@ function SettingsWidget:applyInterfaceChanges(s)
         p:setSetting("previous_move_hints", s.previous_move_hints and true or false)
         p:setSetting("opponent_hints", s.opponent_hints and true or false)
         p:setSetting("check_hints", s.check_hints and true or false)
+        p:setSetting("rotate_top_pieces", s.rotate_top_pieces and true or false)
     end
 end
 
@@ -612,6 +617,7 @@ function SettingsWidget:resetToDefaults()
     self.changes.previous_move_hints = false
     self.changes.opponent_hints = false
     self.changes.check_hints = false
+    self.changes.rotate_top_pieces = false
     self.changes.human_choice    = { [Chess.WHITE] = true, [Chess.BLACK] = false }
     self.changes.time_control    = {
         [Chess.WHITE] = { base_minutes = 15, incr_seconds = 10 },
@@ -654,6 +660,7 @@ function SettingsWidget:applyAndClose()
         p:setSetting("previous_move_hints", s.previous_move_hints and true or false)
         p:setSetting("opponent_hints", s.opponent_hints and true or false)
         p:setSetting("check_hints", s.check_hints and true or false)
+        p:setSetting("rotate_top_pieces", s.rotate_top_pieces and true or false)
         local wc = s.time_control[Chess.WHITE]
         local bc = s.time_control[Chess.BLACK]
         p:setSetting("time_base_white", wc.base_minutes * 60)
@@ -662,6 +669,9 @@ function SettingsWidget:applyAndClose()
         p:setSetting("time_incr_black", bc.incr_seconds)
     end
 
+    if self.parent and self.parent.updateBoardOrientation then
+        self.parent:updateBoardOrientation()
+    end
     self.onApply(s)
     UIManager:close(self.dialog)
 end

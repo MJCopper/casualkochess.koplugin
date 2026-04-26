@@ -16,12 +16,12 @@ local SELECTED_BORDER = 5
 
 local icons = {
     empty = "casualchess/empty", 
-    [Chess.PAWN]   = { [Chess.WHITE] = "casualchess/wP", [Chess.BLACK] = "casualchess/bP" },
-    [Chess.KNIGHT] = { [Chess.WHITE] = "casualchess/wN", [Chess.BLACK] = "casualchess/bN" },
-    [Chess.BISHOP] = { [Chess.WHITE] = "casualchess/wB", [Chess.BLACK] = "casualchess/bB" },
-    [Chess.ROOK]   = { [Chess.WHITE] = "casualchess/wR", [Chess.BLACK] = "casualchess/bR" },
-    [Chess.QUEEN]  = { [Chess.WHITE] = "casualchess/wQ", [Chess.BLACK] = "casualchess/bQ" },
-    [Chess.KING]   = { [Chess.WHITE] = "casualchess/wK", [Chess.BLACK] = "casualchess/bK" },
+    [Chess.PAWN]   = { [Chess.WHITE] = "casualchess/wP", [Chess.BLACK] = "casualchess/bP", rotated = { [Chess.WHITE] = "casualchess/wP_rot", [Chess.BLACK] = "casualchess/bP_rot" } },
+    [Chess.KNIGHT] = { [Chess.WHITE] = "casualchess/wN", [Chess.BLACK] = "casualchess/bN", rotated = { [Chess.WHITE] = "casualchess/wN_rot", [Chess.BLACK] = "casualchess/bN_rot" } },
+    [Chess.BISHOP] = { [Chess.WHITE] = "casualchess/wB", [Chess.BLACK] = "casualchess/bB", rotated = { [Chess.WHITE] = "casualchess/wB_rot", [Chess.BLACK] = "casualchess/bB_rot" } },
+    [Chess.ROOK]   = { [Chess.WHITE] = "casualchess/wR", [Chess.BLACK] = "casualchess/bR", rotated = { [Chess.WHITE] = "casualchess/wR_rot", [Chess.BLACK] = "casualchess/bR_rot" } },
+    [Chess.QUEEN]  = { [Chess.WHITE] = "casualchess/wQ", [Chess.BLACK] = "casualchess/bQ", rotated = { [Chess.WHITE] = "casualchess/wQ_rot", [Chess.BLACK] = "casualchess/bQ_rot" } },
+    [Chess.KING]   = { [Chess.WHITE] = "casualchess/wK", [Chess.BLACK] = "casualchess/bK", rotated = { [Chess.WHITE] = "casualchess/wK_rot", [Chess.BLACK] = "casualchess/bK_rot" } },
 }
 
 local Board = FrameContainer:extend{
@@ -40,6 +40,8 @@ local Board = FrameContainer:extend{
     previous_move_hints = false,
     opponent_hints = false,
     check_hints = false,
+    flipped = false,
+    rotate_top_pieces = false,
     _hint_squares  = nil,
     _previous_move_squares = nil,
     _check_square = nil,
@@ -72,9 +74,16 @@ function Board:init()
     self.selected = nil
 
     local grid = {}
-    for rank = BOARD_SIZE - 1, 0, -1 do 
+    local rank_start, rank_stop, rank_step = BOARD_SIZE - 1, 0, -1
+    local file_start, file_stop, file_step = 0, BOARD_SIZE - 1, 1
+    if self.flipped then
+        rank_start, rank_stop, rank_step = 0, BOARD_SIZE - 1, 1
+        file_start, file_stop, file_step = BOARD_SIZE - 1, 0, -1
+    end
+
+    for rank = rank_start, rank_stop, rank_step do
         local row = {}
-        for file = 0, BOARD_SIZE - 1 do 
+        for file = file_start, file_stop, file_step do
             table.insert(row, self:createSquareButton(file, rank))
         end
         table.insert(grid, row)
@@ -107,6 +116,26 @@ function Board:init()
     }
     self[1] = padded
 
+end
+
+function Board:setFlipped(flipped)
+    flipped = flipped and true or false
+    if self.flipped == flipped then return end
+    self.flipped = flipped
+    self.selected = nil
+    self._hint_squares = nil
+    self._previous_move_squares = nil
+    self._check_square = nil
+    self._peek_square = nil
+    self:init()
+    self:updateBoard()
+end
+
+function Board:setRotateTopPieces(rotate_top_pieces)
+    rotate_top_pieces = rotate_top_pieces and true or false
+    if self.rotate_top_pieces == rotate_top_pieces then return end
+    self.rotate_top_pieces = rotate_top_pieces
+    self:updateBoard()
 end
 
 function Board:createSquareButton(file, rank)
@@ -586,7 +615,15 @@ function Board:clearCheckHint()
 end
 
 function Board:placePiece(square, piece, color)
-    local icon = (piece and icons[piece] and icons[piece][color]) or icons.empty
+    local icon = icons.empty
+    local piece_icons = piece and icons[piece]
+    if piece_icons then
+        icon = piece_icons[color] or icons.empty
+        local top_color = self.flipped and Chess.WHITE or Chess.BLACK
+        if self.rotate_top_pieces and color == top_color and piece_icons.rotated then
+            icon = piece_icons.rotated[color] or icon
+        end
+    end
     local id_result = Board.chessToId(square)
     if not id_result then return end
 

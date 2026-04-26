@@ -34,6 +34,7 @@ function InterfaceWidget:new(opts)
             previous_move_hints = init.previous_move_hints == true,
             opponent_hints = init.opponent_hints == true,
             check_hints = init.check_hints == true,
+            rotate_top_pieces = init.rotate_top_pieces == true,
         },
     }, InterfaceWidget)
 end
@@ -97,6 +98,8 @@ function InterfaceWidget:buildOptions()
         self:makeToggle("previous_move_hints", _("Previous Move Hints")),
         VerticalSpan:new{ width = Size.padding.small },
         self:makeToggle("check_hints", _("Check Hints")),
+        VerticalSpan:new{ width = Size.padding.small },
+        self:makeToggle("rotate_top_pieces", _("Invert Opponent Pieces")),
     }
 end
 
@@ -109,6 +112,7 @@ function InterfaceWidget:applyPreview()
     board.previous_move_hints = self.changes.previous_move_hints
     board.opponent_hints = self.changes.opponent_hints
     board.check_hints = self.changes.check_hints
+    board:setRotateTopPieces(self.changes.rotate_top_pieces)
 
     if not board.learning_mode then
         board:clearValidMoves()
@@ -189,6 +193,7 @@ function InterfaceWidget:resetToDefaults()
     self.changes.previous_move_hints = false
     self.changes.opponent_hints = false
     self.changes.check_hints = false
+    self.changes.rotate_top_pieces = false
     self:saveAndClose()
 end
 

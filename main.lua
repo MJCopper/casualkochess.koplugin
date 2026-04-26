@@ -192,6 +192,7 @@ function Kochess:switchToHumanVsHuman()
     if self.status_bar then
         self:updatePlayerDisplay()
     end
+    self:updateBoardOrientation()
 end
 
 function Kochess:markEngineInvalid(reason)
@@ -494,7 +495,21 @@ function Kochess:initializeBoard(board_h)
         previous_move_hints = self:getSetting("previous_move_hints", false),
         opponent_hints = self:getSetting("opponent_hints", false),
         check_hints = self:getSetting("check_hints", false),
+        flipped = self:shouldFlipBoard(),
+        rotate_top_pieces = self:getSetting("rotate_top_pieces", false),
     }
+end
+
+function Kochess:shouldFlipBoard()
+    return self.game
+       and self.game.is_human(Chess.BLACK)
+       and not self.game.is_human(Chess.WHITE)
+end
+
+function Kochess:updateBoardOrientation()
+    if not self.board then return end
+    self.board:setFlipped(self:shouldFlipBoard())
+    self.board:setRotateTopPieces(self:getSetting("rotate_top_pieces", false))
 end
 
 function Kochess:buildUILayout()
@@ -718,6 +733,16 @@ function Kochess:launchNextMove()
     end
 end
 
+function Kochess:launchCurrentComputerMove()
+    if not (self.engine and self.engine.state.uciok and not self.game.is_human(self.game.turn())) then return end
+
+    self.running = true
+    self.timer.currentPlayer = self.game.turn()
+    self.timer:start()
+    self:updateTimerDisplay()
+    self:launchUCI()
+end
+
 function Kochess:uciMove(str)
     if self.weakening then
         str = self.weakening:maybeWeaken(str)
@@ -810,6 +835,7 @@ function Kochess:resetGame()
     self:setSetting("saved_pgn", "")
     self.running = false
     self:updateTimerDisplay(); self:updatePlayerDisplay(); self.board:updateBoard(); UIManager:setDirty(self, "ui")
+    self:launchCurrentComputerMove()
 end
 
 function Kochess:showGameOverDialog(result, reason)
@@ -856,7 +882,7 @@ function Kochess:showGameOverDialog(result, reason)
             self:updatePgnLogInitialText()
             self:updateEvalLine()
 
-            self:launchNextMove()
+            self:launchCurrentComputerMove()
         end,
     })
 end
@@ -879,10 +905,12 @@ function Kochess:createStatusBar()
                 game    = self.game,
                 parent  = self,
                 onApply = function()
-                    if not self.game.is_human(self.game.turn()) then self:launchNextMove() end
+                    self:stopUCI()
                     self.timer:reset()
+                    self:updateBoardOrientation()
                     self:updatePlayerDisplay()
                     self:updateTimerDisplay()
+                    self:launchCurrentComputerMove()
                 end,
             }:show()
         end,
