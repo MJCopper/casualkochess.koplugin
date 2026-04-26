@@ -43,14 +43,29 @@ local _ = require("gettext")
 local function getPluginPath()
     local src = debug.getinfo(1, "S").source or ""
     src = src:gsub("^@", "")
-    local path = src:match("^(.*[/\\])main%.lua$")
+    local path = src:match("^(.*[/\\])main%.lua$") or "."
 
     return path
 end
 
-local PLUGIN_PATH = getPluginPath()
+local function normalizePath(path)
+    path = (path or ""):gsub("\\", "/")
+    return path:gsub("/+", "/")
+end
 
-local ENGINES_DIR = PLUGIN_PATH .. "engines/"
+local function joinPath(...)
+    local parts = {...}
+    local path = tostring(parts[1] or "")
+    for i = 2, #parts do
+        local part = tostring(parts[i] or "")
+        path = path:gsub("/+$", "") .. "/" .. part:gsub("^/+", "")
+    end
+    return normalizePath(path)
+end
+
+local PLUGIN_PATH = normalizePath(getPluginPath()):gsub("/+$", "")
+
+local ENGINES_DIR = joinPath(PLUGIN_PATH, "engines")
 
 local function fileExists(path)
     local ok = lfs.attributes(path, "mode")
@@ -61,49 +76,19 @@ local function chmodX(path)
     os.execute('chmod +x "' .. path .. '"')
 end
 
-local function getArch()
-    local p = io.popen("uname -m 2>/dev/null")
-    if not p then return "unknown" end
-    local out = p:read("*a") or ""
-    p:close()
-    out = out:gsub("%s+", "")
-
-    return (#out > 0) and out or "unknown"
-end
-
 local function getEnginePath()
-    local arch = getArch()
+    local path = joinPath(ENGINES_DIR, "stockfish")
 
-    local candidates = {} 
-
-    if Device:isKobo() then
-        candidates = { ENGINES_DIR .. "stockfish" }
-    elseif Device:isKindle() then
-        candidates = { ENGINES_DIR .. "stockfish_kindle" }
-    else
-        candidates = { PLUGIN_PATH .. "dev/engines/stockfish_pc"}
-    end
-
-    if arch == "x86_64" then
-        candidates[#candidates+1] = ENGINES_DIR .. "stockfish_pc"
-    elseif arch:match("^arm") then
-        candidates[#candidates+1] = ENGINES_DIR .. "stockfish"
-    elseif arch == "aarch64" then
-        candidates[#candidates+1] = ENGINES_DIR .. "stockfish_linux_aarch64"
-    end
-
-    for _, path in ipairs(candidates) do
-        if fileExists(path) then
-            chmodX(path)
-            return path
-        end
+    if fileExists(path) then
+        chmodX(path)
+        return path
     end
 
     return nil
 end
 
 local UCI_ENGINE_PATH = getEnginePath()
-local GAMES_PATH = PLUGIN_PATH .. "Games"
+local GAMES_PATH = joinPath(PLUGIN_PATH, "Games")
 
 local BACKGROUND_COLOR = Blitbuffer.COLOR_WHITE
 local PGN_LOG_FONT = "smallinfofont"
@@ -180,14 +165,14 @@ end
 function Kochess:installIconsIfNeeded()
     local data_dir = DataStorage:getDataDir()
     local dest_dir = data_dir .. "/icons/casualchess"
-    local src_dir  = PLUGIN_PATH .. "icons"
+    local src_dir  = joinPath(PLUGIN_PATH, "icons")
     if lfs.attributes(src_dir, "mode") ~= "directory" then return end
     util.makePath(dest_dir)
     for entry in lfs.dir(src_dir) do
         if entry:match("%.svg$") then
             local dest_file = dest_dir .. "/" .. entry
             if lfs.attributes(dest_file, "mode") ~= "file" then
-                os.execute('cp "' .. src_dir .. "/" .. entry .. '" "' .. dest_file .. '"')
+                os.execute('cp "' .. joinPath(src_dir, entry) .. '" "' .. dest_file .. '"')
             end
         end
     end
@@ -265,7 +250,7 @@ function Kochess:loadOpenings()
     if self.openings then return end
 
     self.openings = {}
-    local path = PLUGIN_PATH .. "data/aperturas.json"
+    local path = joinPath(PLUGIN_PATH, "data/aperturas.json")
 
     local f = io.open(path, "r")
     if not f then
@@ -326,7 +311,7 @@ function Kochess:initializeEngine()
     if not UCI_ENGINE_PATH then
 
         UIManager:show(InfoMessage:new{
-            text = "Stockfish engine not found.\nCopy the engine binary to:\n" .. ENGINES_DIR,
+            text = "Stockfish engine not found.\nCopy the engine binary to:\n" .. ENGINES_DIR .. "/",
         })
         return
     end
