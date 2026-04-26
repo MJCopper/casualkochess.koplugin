@@ -18,6 +18,7 @@ local DoubleSpinWidget = require("ui/widget/doublespinwidget")
 local FrameContainer = require("ui/widget/container/framecontainer")
 local MovableContainer = require("ui/widget/container/movablecontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
+local InfoMessage = require("ui/widget/infomessage")
 
 local Chess = require("chess")
 local EngineWidget = require("enginewidget")
@@ -30,7 +31,6 @@ local SettingsWidget = {}
 SettingsWidget.__index = SettingsWidget
 
 function SettingsWidget:new(opts)
-    assert(opts.engine, "engine is required")
     assert(opts.timer,  "timer is required")
     assert(opts.game,   "game is required")
     assert(opts.onApply and type(opts.onApply) == "function",
@@ -63,9 +63,10 @@ function SettingsWidget:initializeState()
 
     local currentSkill = (self.parent and tonumber(self.parent.current_skill)) or nil
 
-    if not currentSkill then
-        local skillOpt = self.engine.state.options["Skill Level"]
+    local engine_options = (self.engine and self.engine.state and self.engine.state.options) or {}
 
+    if not currentSkill then
+        local skillOpt = engine_options["Skill Level"]
         currentSkill = (skillOpt and tonumber(skillOpt.value)) or 0
     end
     currentSkill = math.max(0, math.min(20, currentSkill))
@@ -74,7 +75,7 @@ function SettingsWidget:initializeState()
     self.max_elo   = 2850
     self.elo_step  = 50
 
-    local eloOpt = self.engine.state.options["UCI_Elo"]
+    local eloOpt = engine_options["UCI_Elo"]
     local currentElo = (eloOpt and tonumber(eloOpt.value)) or 1350
     currentElo = math.max(self.min_elo, math.min(self.max_elo, currentElo))
 
@@ -400,6 +401,14 @@ function SettingsWidget:buildEngineButton()
         radius  = Size.radius.button,
         padding = Size.padding.small,
         callback = function()
+            if not (self.engine and self.engine.state and self.engine.state.uciok) then
+                local text = _("Stockfish engine is not ready.")
+                if self.parent and self.parent.getEngineStatusText then
+                    text = self.parent:getEngineStatusText()
+                end
+                UIManager:show(InfoMessage:new{ text = text })
+                return
+            end
             local ew = EngineWidget:new{
                 engine  = self.engine,
                 parent  = self.parent,
@@ -494,9 +503,10 @@ function SettingsWidget:applyInterfaceChanges(s)
 end
 
 function SettingsWidget:applyEngineChanges(s)
-    local optSkill = self.engine.state.options["Skill Level"]
+    local engine_options = (self.engine and self.engine.state and self.engine.state.options) or {}
+    local optSkill = engine_options["Skill Level"]
     local v = math.max(0, math.min(20, tonumber(s.skill_level) or 0))
-    if optSkill then self.engine:setOption("Skill Level", tostring(v)) end
+    if optSkill and self.engine then self.engine:setOption("Skill Level", tostring(v)) end
     if self.parent then
         self.parent.current_skill = v
         self.parent.engine_movetime = math.max(1, math.min(10, tonumber(s.engine_movetime) or 1))
@@ -517,7 +527,6 @@ end
 
 function SettingsWidget:assembleContent()
     local D = self.dialog
-    local empty = VerticalSpan:new{ width = 0 }
     local content = FrameContainer:new{
         radius     = Size.radius.window,
         bordersize = Size.border.window,
@@ -531,26 +540,26 @@ function SettingsWidget:assembleContent()
 
             VerticalSpan:new{ width = Size.padding.large },
 
-            self.engine.state.uciok and CenterContainer:new{
+            CenterContainer:new{
                 dimen = Geometry:new{ w=D.width, h=self.playerSettingsGroup:getSize().h },
                 self.playerSettingsGroup
-            } or VerticalSpan:new{ width = 0 },
+            },
 
-            self.engine.state.uciok and VerticalSpan:new{ width = Size.padding.large } or empty,
+            VerticalSpan:new{ width = Size.padding.large },
 
-            self.engine.state.uciok and CenterContainer:new{
+            CenterContainer:new{
                 dimen = Geometry:new{ w=D.width, h=self.difficultyGroup:getSize().h },
                 self.difficultyGroup,
-            } or VerticalSpan:new{ width = 0 },
+            },
 
-            self.engine.state.uciok and VerticalSpan:new{ width = Size.padding.large } or empty,
+            VerticalSpan:new{ width = Size.padding.large },
 
-            self.engine.state.uciok and CenterContainer:new{
+            CenterContainer:new{
                 dimen = Geometry:new{ w=D.width, h=self.engineButton:getSize().h },
                 self.engineButton,
-            } or VerticalSpan:new{ width = 0 },
+            },
 
-            self.engine.state.uciok and VerticalSpan:new{ width = Size.padding.large } or empty,
+            VerticalSpan:new{ width = Size.padding.large },
 
             CenterContainer:new{
                 dimen = Geometry:new{ w=D.width, h=self.interfaceButton:getSize().h },

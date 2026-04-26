@@ -2,6 +2,7 @@
 
 local UIManager = require("ui/uimanager")
 local ffi = require("ffi")
+local bit = require("bit")
 local C = ffi.C
 pcall(ffi.cdef, [[
     typedef long ssize_t;
@@ -32,6 +33,10 @@ pcall(ffi.cdef, [[
 local PRIO_PROCESS = 0
 local SCHED_BATCH  = 3
 local POLLIN       = 0x001
+local POLLERR      = 0x008
+local POLLHUP      = 0x010
+local POLLNVAL     = 0x020
+local WNOHANG      = 1
 local BUF_SZ       = 4096
 
 local Utils = {}
@@ -125,11 +130,20 @@ function Utils.reader(fd, action)
     return function()
         local ret = C.poll(pollfds, 1, 0)
         if ret <= 0 then return end
-        if pollfds[0].revents == 0 then return end
+        local revents = pollfds[0].revents
+        if revents == 0 then return end
+        if bit.band(revents, POLLERR + POLLNVAL) ~= 0 then
+            return false, "engine output pipe error"
+        end
 
         local c_buf = ffi.new("char[?]", BUF_SZ)
         local n = C.read(fd, c_buf, BUF_SZ - 1)
-        if n <= 0 then return end
+        if n == 0 then
+            return false, "engine process closed before UCI response"
+        end
+        if n < 0 then
+            return false, "engine output read failed: " .. ffi.string(C.strerror(C.errno))
+        end
 
         buffer = buffer .. ffi.string(c_buf, n)
 
@@ -142,6 +156,8 @@ function Utils.reader(fd, action)
                 break
             end
         end
+
+        return true
     end
 end
 
@@ -149,9 +165,24 @@ function Utils.writer(fd)
     return function(cmd)
         local line = cmd .. "\n"
         local n = C.write(fd, line, #line)
-        if n ~= #line then return false end
+        if n ~= #line then
+            return false, ffi.string(C.strerror(C.errno))
+        end
         return true
     end
+end
+
+function Utils.pollProcess(pid)
+    if not pid or pid <= 0 then return nil end
+
+    local status = ffi.new("int[1]")
+    local ret = C.waitpid(pid, status, WNOHANG)
+    if ret == 0 then return nil end
+    if ret < 0 then
+        return "engine process status failed: " .. ffi.string(C.strerror(C.errno))
+    end
+
+    return "engine process exited with status " .. tostring(status[0])
 end
 
 function Utils.closeFd(fd)

@@ -162,6 +162,43 @@ function Kochess:setSetting(key, value)
     self:saveSettings()
 end
 
+function Kochess:getEngineStatusText()
+    if not UCI_ENGINE_PATH then
+        return "Stockfish engine not found.\nCopy the engine binary to:\n" .. ENGINES_DIR .. "/"
+    end
+    if self.engine and self.engine.state and self.engine.state.uciok then
+        return "Stockfish engine is ready."
+    end
+
+    local text = "Stockfish engine is not ready.\nPath:\n" .. UCI_ENGINE_PATH
+    local detail = self.engine_status_text
+        or self.engine_last_output
+        or (self.engine and self.engine.state and (self.engine.state.last_error or self.engine.state.last_output))
+    if detail and detail ~= "" then
+        text = text .. "\n\nLast engine output:\n" .. detail
+    end
+    return text
+end
+
+function Kochess:switchToHumanVsHuman()
+    self.human_white = true
+    self.human_black = true
+    if self.game then
+        self.game.set_human(Chess.WHITE, true)
+        self.game.set_human(Chess.BLACK, true)
+    end
+    self:setSetting("human_white", true)
+    self:setSetting("human_black", true)
+    if self.status_bar then
+        self:updatePlayerDisplay()
+    end
+end
+
+function Kochess:markEngineInvalid(reason)
+    self.engine_status_text = reason or "Stockfish engine is not ready."
+    self:switchToHumanVsHuman()
+end
+
 function Kochess:installIconsIfNeeded()
     local data_dir = DataStorage:getDataDir()
     local dest_dir = data_dir .. "/icons/casualchess"
@@ -307,12 +344,11 @@ function Kochess:initializeEngine()
     self.human_white = self:getSetting("human_white", true)
     self.human_black = self:getSetting("human_black", false)
     self.last_cp = nil
+    self.engine_status_text = nil
+    self.engine_last_output = nil
 
     if not UCI_ENGINE_PATH then
-
-        UIManager:show(InfoMessage:new{
-            text = "Stockfish engine not found.\nCopy the engine binary to:\n" .. ENGINES_DIR .. "/",
-        })
+        self:markEngineInvalid("Stockfish engine not found.")
         return
     end
 
@@ -321,7 +357,7 @@ function Kochess:initializeEngine()
     
     if not self.engine then
 
-        UIManager:show(InfoMessage:new{ text = "Engine failed to start." })
+        self:markEngineInvalid("Engine process could not be created.")
         return
     end
 
@@ -330,6 +366,10 @@ function Kochess:initializeEngine()
             local clean = data:gsub("\r", "")
 
             for line in tostring(data):gmatch("[^\r\n]+") do
+                self.engine_last_output = line
+                if line:match("execvp failed") then
+                    self:markEngineInvalid(line)
+                end
                 if line:match("^info ") then
                     local mp = tonumber(line:match(" multipv (%d+)")) or 1
                     if mp == 1 then
@@ -354,6 +394,7 @@ function Kochess:initializeEngine()
     end)
 
     self.engine:on("uciok", function()
+        self.engine_status_text = nil
 
         if not self:getSetting("saved_pgn", "") or self:getSetting("saved_pgn", "") == "" then
             self:updatePgnLogInitialText()
@@ -394,6 +435,28 @@ function Kochess:initializeEngine()
         if not self.game.is_human(self.game.turn()) then
             self:uciMove(move_uci)
         end
+    end)
+
+    self.engine:on("process_error", function(err)
+        self.engine_busy = false
+        self:markEngineInvalid(err or "Stockfish engine process failed.")
+    end)
+
+    self.engine:on("uci_timeout", function(last_output)
+        local text = "Timed out waiting for Stockfish UCI response."
+        if last_output and last_output ~= "" then
+            text = text .. "\n" .. last_output
+        end
+        self:markEngineInvalid(text)
+    end)
+
+    self.engine:on("go_timeout", function(last_output)
+        self.engine_busy = false
+        local text = "Timed out waiting for Stockfish bestmove."
+        if last_output and last_output ~= "" then
+            text = text .. "\n" .. last_output
+        end
+        self:markEngineInvalid(text)
     end)
     
     self.engine:uci()
@@ -664,6 +727,7 @@ function Kochess:uciMove(str)
 end
 
 function Kochess:launchUCI()
+    if not (self.engine and self.engine.state and self.engine.state.uciok) then return end
     if self.engine_busy then return end
     self.engine_busy = true
 
@@ -815,7 +879,7 @@ function Kochess:createStatusBar()
                 game    = self.game,
                 parent  = self,
                 onApply = function()
-                    if not self.game.is_human(self.game.turn()) then self:launchUCI() end
+                    if not self.game.is_human(self.game.turn()) then self:launchNextMove() end
                     self.timer:reset()
                     self:updatePlayerDisplay()
                     self:updateTimerDisplay()

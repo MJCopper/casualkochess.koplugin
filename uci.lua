@@ -11,6 +11,11 @@ local function parse_uci_line(line, state)
     line = line:match("^%s*(.-)%s*$")
     if not line or line == "" then return end
 
+    state.last_output = line
+    if line:match("execvp failed") then
+        state.last_error = line
+    end
+
     local eng = state._engine
 
     if line == "uciok" then
@@ -47,7 +52,7 @@ local function parse_uci_line(line, state)
 end
 
 function UCIEngine.spawn(cmd, args)
-    local pid, rfd, wfd = Utils.execInSubProcess(cmd, args or {}, true, true)
+    local pid, rfd, wfd = Utils.execInSubProcess(cmd, args or {}, true, false)
     if not pid then return nil end
 
     local self = setmetatable({}, UCIEngine)
@@ -60,6 +65,9 @@ function UCIEngine.spawn(cmd, args)
         readyok  = false,
         bestmove = nil,
         options  = {},
+        last_output = nil,
+        last_error = nil,
+        process_error = nil,
         _engine  = self,
     }
 
@@ -72,15 +80,31 @@ function UCIEngine.spawn(cmd, args)
     )
     self._reader = function()
         if not self.closed then
-            _reader()
+            local ok, err = _reader()
+            if ok == false then
+                self.state.process_error = err
+                self.state.last_error = err
+                self:_trigger("process_error", err)
+                return false, err
+            end
         end
+        return true
     end
 
     local _write = Utils.writer(self.fd_write)
     self._write = _write
     self.send = function(data)
         if self.closed then return false end
-        return _write(tostring(data))
+        local ok, err = _write(tostring(data))
+        if not ok then
+            local msg = "engine input write failed"
+            if err and err ~= "" then msg = msg .. ": " .. err end
+            self.state.process_error = msg
+            self.state.last_error = msg
+            self:_trigger("process_error", msg)
+            return false
+        end
+        return true
     end
 
     return self
@@ -101,14 +125,28 @@ function UCIEngine:uci()
     self.state.uciok   = false
     self.state.readyok = false
     local ticks_left   = 80
+    local timed_out    = false
 
-    self.send("uci")
+    if not self.send("uci") then return end
 
     Utils.pollingLoop(0.25, self._reader, function()
         ticks_left = ticks_left - 1
         if self.closed then return false end
         if self.state.uciok then return false end
-        if ticks_left <= 0 then return false end
+        local process_error = self.state.process_error or Utils.pollProcess(self.pid)
+        if process_error then
+            self.state.process_error = process_error
+            self.state.last_error = process_error
+            self:_trigger("process_error", process_error)
+            return false
+        end
+        if ticks_left <= 0 then
+            if not timed_out then
+                timed_out = true
+                self:_trigger("uci_timeout", self.state.last_error or self.state.last_output)
+            end
+            return false
+        end
         return true
     end)
 end
@@ -161,9 +199,30 @@ function UCIEngine:go(opts)
 
     self.state.bestmove = nil
 
-    self.send(cmd)
+    if not self.send(cmd) then return end
+
+    local movetime = tonumber(opts.movetime) or 0
+    local max_seconds = math.max(10, (movetime / 1000) + 10)
+    local ticks_left = math.ceil(max_seconds / 0.25)
+    local timed_out = false
 
     Utils.pollingLoop(0.25, self._reader, function()
+        if self.closed or self.state.bestmove then return false end
+        local process_error = self.state.process_error or Utils.pollProcess(self.pid)
+        if process_error then
+            self.state.process_error = process_error
+            self.state.last_error = process_error
+            self:_trigger("process_error", process_error)
+            return false
+        end
+        ticks_left = ticks_left - 1
+        if ticks_left <= 0 then
+            if not timed_out then
+                timed_out = true
+                self:_trigger("go_timeout", self.state.last_error or self.state.last_output)
+            end
+            return false
+        end
         return not self.closed and not self.state.bestmove
     end)
 end
@@ -178,6 +237,7 @@ function UCIEngine:quit()
     self.closed = true
     Utils.closeFd(self.fd_write)
     Utils.closeFd(self.fd_read)
+    Utils.pollProcess(self.pid)
     self.fd_write = nil
     self.fd_read = nil
 end
