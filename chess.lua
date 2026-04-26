@@ -13,7 +13,7 @@ function Chess:new()
     local instance = _Chess()
     instance.human_player = {
         [instance.WHITE] = true,
-        [instance.BLACK] = false,  -- Computer plays Black by default
+        [instance.BLACK] = false,
     }
     instance.redo_stack = {}
     local replaying_redo = false
@@ -41,10 +41,9 @@ function Chess:new()
         return result
     end
 
-    -- override undo: call base, push onto redo_stack
     local _undo = instance.undo
     instance.undo = function()
-        local move = _undo(instance)    -- call the base‐class undo
+        local move = _undo(instance)
 
         if move then
             table.insert(instance.redo_stack, move)
@@ -52,7 +51,6 @@ function Chess:new()
         return move
     end
 
-    -- redo: pop from redo_stack and re-apply
     instance.redo = function()
         local _move = table.remove(instance.redo_stack)
         local result
@@ -68,7 +66,6 @@ function Chess:new()
         return instance.redo_stack
     end
 
-    -- override reset: clear redo stack, then call base
     local _reset = instance.reset
     instance.reset = function()
         instance.redo_stack = {}

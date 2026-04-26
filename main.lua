@@ -12,7 +12,6 @@ local LuaSettings  = require("luasettings")
 local util = require("util")
 local json = require("json")
 
--- IconWidget snapshots the user icon directory at require time.
 pcall(function() util.makePath(DataStorage:getDataDir() .. "/icons") end)
 
 local CenterContainer = require("ui/widget/container/centercontainer")
@@ -42,10 +41,8 @@ local Weakening = require("weakening")
 local _ = require("gettext")
 
 local function getPluginPath()
-    -- resolve path relative to this file
     local src = debug.getinfo(1, "S").source or ""
-    src = src:gsub("^@", "") -- strip leading @ added by LuaJIT
-    -- strip filename to get directory
+    src = src:gsub("^@", "")
     local path = src:match("^(.*[/\\])main%.lua$")
 
     return path
@@ -61,12 +58,10 @@ local function fileExists(path)
 end
 
 local function chmodX(path)
-    -- required on Kindle/Kobo; harmless on other platforms
     os.execute('chmod +x "' .. path .. '"')
 end
 
 local function getArch()
-    -- uname -m is available on Kobo, Kindle, and Linux
     local p = io.popen("uname -m 2>/dev/null")
     if not p then return "unknown" end
     local out = p:read("*a") or ""
@@ -79,7 +74,6 @@ end
 local function getEnginePath()
     local arch = getArch()
 
-    -- 1) prefer device-specific binary
     local candidates = {} 
 
     if Device:isKobo() then
@@ -87,11 +81,9 @@ local function getEnginePath()
     elseif Device:isKindle() then
         candidates = { ENGINES_DIR .. "stockfish_kindle" }
     else
-        -- fallback for PC/dev
         candidates = { PLUGIN_PATH .. "dev/engines/stockfish_pc"}
     end
 
-    -- 2) arch fallback if device type doesn't match
     if arch == "x86_64" then
         candidates[#candidates+1] = ENGINES_DIR .. "stockfish_pc"
     elseif arch:match("^arm") then
@@ -100,7 +92,6 @@ local function getEnginePath()
         candidates[#candidates+1] = ENGINES_DIR .. "stockfish_linux_aarch64"
     end
 
-    -- 3) use first binary that exists
     for _, path in ipairs(candidates) do
         if fileExists(path) then
             chmodX(path)
@@ -138,7 +129,6 @@ function Kochess:onCasualChessStart()
 end
 
 function Kochess:onCloseWidget()
-    -- Clear any board state when widget is closed
     if self.board then
         self.board:clearValidMoves()
     end
@@ -146,14 +136,11 @@ function Kochess:onCloseWidget()
 end
 
 function Kochess:handleEvent(event)
-    -- CasualChessStart must bypass the stack guard — it is fired by the
-    -- Dispatcher when the game is closed (not on stack) to launch the game.
+    -- Dispatcher can launch the game while this widget is not on the stack.
     if event.handler == "onCasualChessStart" then
         return self:onCasualChessStart()
     end
-    -- Block all other event handling when we are not currently shown as a
-    -- top-level widget. Without this, the plugin receives events via
-    -- FileManager's child propagation even after UIManager:close().
+    -- FileManager can still propagate child events after UIManager:close().
     local on_stack = false
     for i = #UIManager._window_stack, 1, -1 do
         if UIManager._window_stack[i].widget == self then
@@ -173,7 +160,6 @@ function Kochess:init()
     })
     self.ui.menu:registerToMainMenu(self)
     self:installIconsIfNeeded()
-    -- Load persisted settings
     local path = DataStorage:getSettingsDir() .. "/casualkochess.lua"
     self.settings = LuaSettings:open(path)
 end
@@ -218,7 +204,6 @@ function Kochess:startGame()
     self.last_mate = nil
     self.eval_turn = nil
 
-    -- Close any previous visible instance before creating a fresh engine.
     if UIManager.isWidgetShown and UIManager:isWidgetShown(self) then
         UIManager:close(self)
     end
@@ -226,10 +211,10 @@ function Kochess:startGame()
     self:initializeGameLogic()
     self:initializeEngine()
     self:loadOpenings()
-    self:buildUILayout()  -- initializeBoard is called inside buildUILayout
+    self:buildUILayout()
     self:updateTimerDisplay()
     self:updatePlayerDisplay()
-    self:restoreGameState()  -- load saved PGN/timers if available
+    self:restoreGameState()
     self.board:updateBoard()
     UIManager:show(self)
 end
@@ -246,10 +231,8 @@ function Kochess:restoreGameState()
     local pgn = self:getSetting("saved_pgn", "")
     if not pgn or pgn == "" then return end
 
-    -- Restore the game from saved PGN
     local ok = pcall(function() self.game.load_pgn(pgn) end)
     if not ok then
-        -- saved PGN was invalid, start fresh
         self:setSetting("saved_pgn", "")
         return
     end
@@ -262,7 +245,6 @@ function Kochess:restoreGameState()
     self.timer.currentPlayer = self.game.turn()
     self.running = self:getSetting("saved_running", false)
 
-    -- Sync engine to restored position
     if self.engine and self.engine.state.uciok then
         self.engine.send("ucinewgame")
         local moves = {}
@@ -279,9 +261,8 @@ function Kochess:restoreGameState()
     self:updatePlayerDisplay()
 end
 
--- Load openings database
 function Kochess:loadOpenings()
-    if self.openings then return end  -- cache
+    if self.openings then return end
 
     self.openings = {}
     local path = PLUGIN_PATH .. "data/aperturas.json"
@@ -305,10 +286,8 @@ function Kochess:loadOpenings()
 
 end
 
--- Initialize UCI engine
 function Kochess:initializeEngine()
 
-    -- Casual preset defaults
     local CASUAL = {
         skill_level     = 0,
         engine_depth    = 2,
@@ -316,8 +295,6 @@ function Kochess:initializeEngine()
         blunder_chance  = 0.20,
     }
 
-    -- Detect missing keys — if any engine setting is absent, write all
-    -- Casual defaults so older installs are migrated cleanly.
     local missing = self.settings:readSetting("skill_level")    == nil
                  or self.settings:readSetting("engine_depth")   == nil
                  or self.settings:readSetting("engine_movetime") == nil
@@ -330,7 +307,6 @@ function Kochess:initializeEngine()
 
     local defaultSkill   = self:getSetting("skill_level",     CASUAL.skill_level)
     self.current_skill   = defaultSkill
-    -- Only load these if not already set (e.g. from a previous session in memory)
     if self.engine_movetime == nil then
         self.engine_movetime = self:getSetting("engine_movetime", CASUAL.engine_movetime)
     end
@@ -340,7 +316,6 @@ function Kochess:initializeEngine()
     if self.blunder_chance == nil then
         self.blunder_chance = self:getSetting("blunder_chance", CASUAL.blunder_chance)
     end
-    -- Keep weakening instance in sync in case blunder_chance was just loaded
     if self.weakening then
         self.weakening:setChance(self.blunder_chance)
     end
@@ -369,7 +344,6 @@ function Kochess:initializeEngine()
         if data then
             local clean = data:gsub("\r", "")
 
-            -- parse score cp/mate from info lines (multipv 1 only)
             for line in tostring(data):gmatch("[^\r\n]+") do
                 if line:match("^info ") then
                     local mp = tonumber(line:match(" multipv (%d+)")) or 1
@@ -400,7 +374,6 @@ function Kochess:initializeEngine()
             self:updatePgnLogInitialText()
         end
 
-        -- conservative settings for e-reader hardware
         self.engine.send("setoption name Hash value 8")
         self.engine.send("setoption name Threads value 1")
         self.engine.send("setoption name Skill Level value " .. defaultSkill)
@@ -411,9 +384,7 @@ function Kochess:initializeEngine()
 
         self.engine:ucinewgame()
 
-        -- If we restored a CvC game that was in progress, sync the position
-        -- and resume. restoreGameState() ran before uciok fired so the game
-        -- state is already loaded; the engine just wasn't ready yet.
+        -- Restored computer-vs-computer games can resume once UCI is ready.
         local is_cvc = not self.game.is_human(Chess.WHITE) and not self.game.is_human(Chess.BLACK)
         if is_cvc and self.running then
             local moves = {}
@@ -440,10 +411,6 @@ function Kochess:initializeEngine()
         end
     end)
     
-    -- Send uci immediately; Stockfish buffers stdin so the command
-    -- will be ready when the process starts. The uci() polling loop
-    -- waits asynchronously for uciok without blocking the UI.
-
     self.engine:uci()
 end
 
@@ -451,12 +418,10 @@ function Kochess:initializeGameLogic()
     self.game = Chess:new()
     self.game.reset()
     self.game.initial_fen = self.game.fen()
-    -- Apply persisted player types
     local human_white = self:getSetting("human_white", true)
     local human_black = self:getSetting("human_black", false)
     self.game.set_human(Chess.WHITE, human_white)
     self.game.set_human(Chess.BLACK, human_black)
-    -- Apply persisted time controls
     local base_w = self:getSetting("time_base_white", 900)
     local base_b = self:getSetting("time_base_black", 900)
     local incr_w = self:getSetting("time_incr_white", 10)
@@ -466,8 +431,6 @@ function Kochess:initializeGameLogic()
         {[Chess.WHITE]=incr_w, [Chess.BLACK]=incr_b},
         function() self:updateTimerDisplay() end)
     self.running = false
-    -- Weakening module: intercepts engine moves and optionally replaces with
-    -- a random legal move. Chance is loaded from settings (default 0 = off).
     self.weakening = Weakening:new(self.game, self.blunder_chance or 0.0)
 end
 
@@ -480,47 +443,39 @@ function Kochess:initializeBoard(board_h)
         onPromotionNeeded = function(f, t, c) self:openPromotionDialog(f, t, c) end,
         learning_mode = self:getSetting("learning_mode", false),
         show_selected = self:getSetting("show_selected", true),
+        previous_move_hints = self:getSetting("previous_move_hints", false),
+        opponent_hints = self:getSetting("opponent_hints", false),
+        check_hints = self:getSetting("check_hints", false),
     }
 end
 
 function Kochess:buildUILayout()
-    -- Build layout bottom-up:
-    -- 1. Status bar  (fixed, measured)
-    -- 2. Log section (fixed, exact content height)
-    -- 3. Board       (fills remaining space, constrained to square)
     local status_bar = self:createStatusBar()
     local status_h   = status_bar:getSize().h
 
-    -- Log section dimensions
     local pad           = Screen:scaleBySize(8)
     local line_h        = Screen:scaleBySize(PGN_LOG_FONT_SIZE) + 4
     local pgn_h         = line_h
     local eval_h        = line_h
     local log_border    = Screen:scaleBySize(1)
-    local toolbar_btn_h = Screen:scaleBySize(32)  -- fixed comfortable toolbar height
+    local toolbar_btn_h = Screen:scaleBySize(32)
     local text_frame_h  = log_border * 2 + pad + pgn_h + eval_h + pad
-    local min_log_h     = text_frame_h + toolbar_btn_h  -- min = 1 pgn line + eval + toolbar
+    local min_log_h     = text_frame_h + toolbar_btn_h
 
-    -- Board: square, fitted into remaining space above log+status.
-    -- Board padding (top/left/right) is accounted for in board.lua cell calculation.
     local BOARD_SIZE    = 8
     local board_pad     = Screen:scaleBySize(8)
     local available_h   = self.full_height - status_h - min_log_h
-    -- cell uses usable area (subtract board padding)
     local usable_w      = self.full_width - 2 * board_pad
     local cell          = math.floor(math.min(usable_w, available_h - board_pad) / BOARD_SIZE)
-    local board_h       = cell * BOARD_SIZE + board_pad  -- widget height includes top padding
-    -- log_h = everything remaining; pgn_log expands to fill extra space
+    local board_h       = cell * BOARD_SIZE + board_pad
     local log_h         = self.full_height - status_h - board_h
-    local pgn_h         = log_h - text_frame_h + line_h  -- expands: base frame minus eval line
+    local pgn_h         = log_h - text_frame_h + line_h
 
     self:initializeBoard(board_h)
     local toolbar_btn_w = math.floor(self.full_width / 5)
     local inner_w       = self.full_width - 2 * pad
 
-    -- pgn_log expands to fill any extra space above the fixed frame content.
-    -- Minimum = 1 line. Extra space comes from board being width-constrained.
-    local frame_fixed_h = log_border * 2 + pad + eval_h + pad  -- frame without pgn
+    local frame_fixed_h = log_border * 2 + pad + eval_h + pad
     local pgn_h         = math.max(line_h, log_h - frame_fixed_h - toolbar_btn_h)
 
     self.eval_line = TextWidget:new{
@@ -579,9 +534,7 @@ function Kochess:buildUILayout()
         self.board, log_section, status_bar,
     }
     self.status_bar = status_bar
-    -- Use direct assignment (not CenterContainer) so the layout always
-    -- anchors to y=0. CenterContainer shifts content up when total height
-    -- exceeds screen height, clipping the title bar above the screen top.
+    -- Keep the full-screen layout anchored at y=0 even when content is tall.
     self[1] = main_vgroup
 end
 
@@ -589,21 +542,17 @@ function Kochess:updatePgnLogInitialText()
     if self.pgn_log then self.pgn_log:setText(""); UIManager:setDirty(self, "ui") end
 end
 
--- Detect opening from move history
 function Kochess:detectOpening()
     if not self.openings then return nil end
 
-    -- get SAN history
     local hist = self.game.history and self.game:history() or nil
     if type(hist) ~= "table" or #hist == 0 then
-        -- fallback: try functional-style call
         hist = self.game.history and self.game.history() or {}
     end
 
     local moves = {}
     for i, san in ipairs(hist) do
         if type(san) == "string" and san ~= "" then
-            -- strip check/annotation symbols
             san = san:gsub("[+#?!]", "")
             moves[#moves + 1] = san
         end
@@ -677,13 +626,10 @@ function Kochess:onMoveExecuted(move)
 
     self.running = true
 
-    -- update PGN log
     self:updatePgnLog()
 
-    -- detect opening
     local opening = self:detectOpening()
 
-    -- update eval/opening line
     if self.eval_line then
         local eval_txt = formatEval(self)
         if opening then
@@ -709,21 +655,15 @@ function Kochess:launchNextMove()
     self:updateTimerDisplay()
     if not (self.engine and self.engine.state.uciok and not self.game.is_human(self.game.turn())) then return end
 
-    -- When both sides are computer, insert a 1-second pause so UIManager can
-    -- drain user input (close dialogs, settings taps, etc.) before the next
-    -- engine search starts. Without the pause the polling loop re-queues so
-    -- fast that user gestures are never serviced, locking the UI.
     local is_cvc = not self.game.is_human(Chess.WHITE) and not self.game.is_human(Chess.BLACK)
     if not is_cvc then
-        -- At least one human side: no delay needed, fire immediately.
         self:launchUCI()
     else
-        -- Computer vs Computer: schedule with a token so we can cancel if the
-        -- user resets, undoes, or closes before the delay expires.
+        -- Let UIManager process taps between computer-vs-computer moves.
         local token = {}
         self._pending_launch = token
         UIManager:scheduleIn(1, function()
-            if self._pending_launch ~= token then return end  -- cancelled
+            if self._pending_launch ~= token then return end
             self._pending_launch = nil
             self:launchUCI()
         end)
@@ -731,7 +671,6 @@ function Kochess:launchNextMove()
 end
 
 function Kochess:uciMove(str)
-    -- Optionally replace engine move with a random legal move
     if self.weakening then
         str = self.weakening:maybeWeaken(str)
     end
@@ -740,11 +679,9 @@ function Kochess:uciMove(str)
 end
 
 function Kochess:launchUCI()
-    -- guard against re-entry
     if self.engine_busy then return end
     self.engine_busy = true
 
-    -- Build the move list from game history
     local moves = {}
     for _, m in ipairs(self.game.history({ verbose = true })) do
         moves[#moves + 1] = m.from .. m.to .. (m.promotion or "")
@@ -753,14 +690,12 @@ function Kochess:launchUCI()
 
     self.eval_turn = self.game.turn()
 
-    -- Send clock values and a hard movetime cap; engine_movetime is adjustable via Settings.
     local movetime_ms = (self.engine_movetime or 1) * 1000
     local wtime = math.max(100, self.timer:getRemainingTime(Chess.WHITE) * 1000)
     local btime = math.max(100, self.timer:getRemainingTime(Chess.BLACK) * 1000)
 
-    -- Apply depth limit if configured (1-3); 0 means unlimited
     local d = tonumber(self.engine_depth) or 0
-    local depth_limit = (d >= 1 and d <= 3) and d or nil
+    local depth_limit = (d >= 1 and d <= 5) and d or nil
 
     self.engine:go({
         wtime    = wtime,
@@ -773,7 +708,7 @@ function Kochess:launchUCI()
 end
 
 function Kochess:stopUCI()
-    self._pending_launch = nil  -- cancel any CvC inter-move delay
+    self._pending_launch = nil
     self.engine_busy = false
     if self.engine and not self.engine.closed and self.engine.state.uciok then self.engine.send("stop") end
 end
@@ -796,7 +731,6 @@ function Kochess:updatePgnLog()
     end
     self.pgn_log:setText(txt)
 
-    -- scroll to end
     if self.pgn_log.scrollToBottom then
         self.pgn_log:scrollToBottom()
     elseif self.pgn_log.scrollTo then
@@ -821,7 +755,9 @@ end
 function Kochess:resetGame()
     self:stopUCI(); self.game.reset(); self.timer:reset()
     if self.engine then self.engine.send("ucinewgame") end
-    -- Clear saved game so next launch starts fresh
+    self.board:clearValidMoves()
+    self.board:clearPreviousMoveHints()
+    self.board:clearCheckHint()
     self:setSetting("saved_pgn", "")
     self.running = false
     self:updateTimerDisplay(); self:updatePlayerDisplay(); self.board:updateBoard(); UIManager:setDirty(self, "ui")
@@ -871,7 +807,6 @@ function Kochess:showGameOverDialog(result, reason)
             self:updatePgnLogInitialText()
             self:updateEvalLine()
 
-            -- trigger engine move if computer plays first
             self:launchNextMove()
         end,
     })
@@ -934,7 +869,6 @@ function Kochess:openLoadPgnDialog()
                 local pgn_data = fh:read("*a")
                 fh:close()
 
-                -- stop engine and timer
                 self:stopUCI()
                 self.timer:stop()
 
@@ -946,7 +880,6 @@ function Kochess:openLoadPgnDialog()
                 self:updateTimerDisplay()
                 self:updatePlayerDisplay()
 
-                -- sync engine to new position
                 if self.engine and self.engine.state.uciok then
                     self.engine.send("ucinewgame")
                     self.engine.send("isready")
@@ -964,7 +897,6 @@ function Kochess:handleSaveFile(dialog, filename_input, current_dir)
     local dir = current_dir
     local file = filename_input:getText():gsub("\n$", "")
 
-    -- ensure .pgn extension
     if not file:lower():match("%.pgn$") then
         file = file .. ".pgn"
     end

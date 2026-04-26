@@ -1,4 +1,3 @@
--- board.lua
 local _ = require("gettext")
 local Geom = require("ui/geometry")
 local Blitbuffer = require("ffi/blitbuffer")
@@ -38,7 +37,13 @@ local Board = FrameContainer:extend{
     board_padding = nil,
     learning_mode  = false,
     show_selected  = true,
+    previous_move_hints = false,
+    opponent_hints = false,
+    check_hints = false,
     _hint_squares  = nil,
+    _previous_move_squares = nil,
+    _check_square = nil,
+    _peek_square = nil,
 }
 
 function Board:getSize()
@@ -52,19 +57,11 @@ function Board:init()
     end
 
     local margins = self:allMarginSizes()
-    -- ButtonTable forces padding = Size.padding.buttontable on every button.
-    -- button_size is the ICON size = cell - 2*bt_pad, so that the rendered
-    -- button (icon + 2*padding) exactly fills the cell.
-    -- ButtonTable forces padding independently per axis:
-    --   horizontal: Size.padding.button   = scaleBySize(2) (small)
-    --   vertical:   Size.padding.buttontable = scaleBySize(4) (larger)
-    -- button width  = cell (ButtonTable treats width as TOTAL, no extra padding added)
-    -- button height = cell (icon_height + 2*pad_v = cell, so icon_height = cell - 2*pad_v)
-    local bt_pad_v = Screen:scaleBySize(4)  -- Size.padding.buttontable (vertical)
+    -- ButtonTable applies vertical padding inside each square; keep icons square.
+    local bt_pad_v = Screen:scaleBySize(4)
     self.board_padding = Screen:scaleBySize(8)
-    -- Subtract padding from usable area before computing cell size
     local usable_w = self.width  - 2 * self.board_padding
-    local usable_h = self.height - self.board_padding  -- no bottom padding
+    local usable_h = self.height - self.board_padding
     local cell = math.min(
         math.floor(usable_w / BOARD_SIZE) - margins.w,
         math.floor(usable_h / BOARD_SIZE) - margins.h
@@ -83,7 +80,7 @@ function Board:init()
         table.insert(grid, row)
     end
 
-    local table_size = cell * BOARD_SIZE  -- cell includes padding
+    local table_size = cell * BOARD_SIZE
     self.table = ButtonTable:new{
         width = table_size,
         buttons = grid,
@@ -94,7 +91,6 @@ function Board:init()
     }
 
     self:applySquareColors()
-    -- Centre the table horizontally and apply top/left/right padding
     local CenterContainer = require("ui/widget/container/centercontainer")
     local padded = FrameContainer:new{
         bordersize     = 0,
@@ -118,9 +114,9 @@ function Board:createSquareButton(file, rank)
         id = Board.toId(file, rank),
         icon = icons.empty,
         alpha = true,
-        width      = self.button_size,   -- total button width = cell (fills width exactly)
+        width      = self.button_size,
         icon_width = self.button_size,
-        icon_height = self.icon_height,  -- smaller so button height = cell after padding
+        icon_height = self.icon_height,
         bordersize = Screen:scaleBySize(SELECTED_BORDER),
         margin = 0,
         padding = 0,
@@ -144,15 +140,18 @@ function Board:applySquareColors()
     end
 end
 
--- Click handling
 function Board:handleClick(file, rank)
     local id = Board.toId(file, rank)
     local square = Board.idToPosition(id) 
 
-    -- Block interaction if not human
-    if self.game and self.game.is_human and (not self.game.is_human(self.game.turn())) then
+    if self._peek_square then
+        self:unmarkSelected(self._peek_square)
+        self:clearValidMoves()
+        self._peek_square = nil
+    end
+    self:clearCheckHint()
 
-        -- clear any stale selection
+    if self.game and self.game.is_human and (not self.game.is_human(self.game.turn())) then
         if self.selected then
             self:unmarkSelected(self.selected)
             self.selected = nil
@@ -162,35 +161,61 @@ function Board:handleClick(file, rank)
 
     local clicked_piece = self.game.get(square)
     local is_my_piece = clicked_piece and (clicked_piece.color == self.game.turn())
+    local can_peek_opponent = clicked_piece
+        and not is_my_piece
+        and self.learning_mode
+        and self.opponent_hints
 
     if self.selected then
         if self.selected == square then
-            -- deselect
             self:unmarkSelected(square)
             self:clearValidMoves()
             self.selected = nil
 
         elseif is_my_piece then
-            -- switch selection
             self:unmarkSelected(self.selected)
             self:clearValidMoves()
             self.selected = square
             self:markSelected(square)
             self:markValidMoves(square)
 
+        elseif can_peek_opponent and not self:isLegalMoveTarget(self.selected, square) then
+            self:unmarkSelected(self.selected)
+            self:clearValidMoves()
+            self:clearPreviousMoveHints()
+            self.selected = nil
+            self._peek_square = square
+            self:markSelected(square)
+            self:markValidMoves(square)
+
         else
-            -- attempt move
             self:clearValidMoves()
             self:handleMove(self.selected, square)
         end
     else
-        -- select piece
         if is_my_piece then
+            self:clearPreviousMoveHints()
             self.selected = square
+            self:markSelected(square)
+            self:markValidMoves(square)
+        elseif can_peek_opponent then
+            self:clearPreviousMoveHints()
+            self._peek_square = square
             self:markSelected(square)
             self:markValidMoves(square)
         end
     end
+end
+
+function Board:isLegalMoveTarget(from, to)
+    local moves = self.game.moves({ verbose = true, square = from })
+    if not moves then return false end
+    for _, move in ipairs(moves) do
+        if move.to == to then
+            return true
+        end
+    end
+    return false
 end
 
 function Board:handleMove(from, to)
@@ -230,6 +255,8 @@ function Board:handleGameMove(move)
     self:updateSquare(move.to)   
 
     self:handleMoveFlags(move, move.to)
+    self:markPreviousMove(move)
+    self:markCheckHint()
 
     if self.moveCallback then
         self.moveCallback(move) 
@@ -265,42 +292,72 @@ function Board:handleMoveFlags(move, to)
     end
 end
 
--- Visual updates
--- ---------------------------------------------------------------------------
--- Overlay helpers: place/remove an SVG icon on top of a button's content.
--- We wrap button[1][1] (the label_container's child, i.e. the label_widget)
--- in an OverlapGroup so the overlay renders above the piece/empty icon.
--- button structure: Button → frame(FrameContainer) → label_container → label_widget
--- ---------------------------------------------------------------------------
-local function overlayIcon(button, icon_name, w, h)
-    local label_container = button.frame[1]
-    if not label_container then return end
-    local orig = label_container[1]
-    if not orig then return end
-    -- Don't double-wrap
-    if orig._is_overlay then return end
-    local overlay = IconWidget:new{
+local OVERLAY_ORDER = { "previous", "check", "selected", "hint" }
+
+local function newOverlayIcon(icon_name, w, h)
+    return IconWidget:new{
         icon        = icon_name,
         alpha       = true,
         width       = w,
         height      = h,
         is_icon     = true,
     }
-    local og = OverlapGroup:new{
-        dimen       = Geom:new{ w = w, h = h },
-        orig,
-        overlay,
-    }
-    og._is_overlay  = true
-    og._orig_widget = orig
-    label_container[1] = og
 end
 
-local function clearOverlay(button)
+local function rebuildOverlayGroup(og, w, h)
+    for i = #og, 2, -1 do
+        og[i] = nil
+    end
+    for _, purpose in ipairs(OVERLAY_ORDER) do
+        local icon_name = og._overlay_icons[purpose]
+        if icon_name then
+            og[#og + 1] = newOverlayIcon(icon_name, w, h)
+        end
+    end
+end
+
+local function overlayIcon(button, purpose, icon_name, w, h)
+    local label_container = button.frame[1]
+    if not label_container then return end
+    local orig = label_container[1]
+    if not orig then return end
+    local og = orig
+
+    if not og._is_overlay then
+        og = OverlapGroup:new{
+            dimen = Geom:new{ w = w, h = h },
+            orig,
+        }
+        og._is_overlay = true
+        og._orig_widget = orig
+        og._overlay_icons = {}
+        og._overlay_w = w
+        og._overlay_h = h
+        label_container[1] = og
+    end
+
+    og._overlay_icons[purpose] = icon_name
+    rebuildOverlayGroup(og, w, h)
+end
+
+local function clearOverlay(button, purpose)
     local label_container = button.frame[1]
     if not label_container then return end
     local og = label_container[1]
     if og and og._is_overlay then
+        if purpose then
+            og._overlay_icons[purpose] = nil
+        else
+            og._overlay_icons = {}
+        end
+
+        for _, p in ipairs(OVERLAY_ORDER) do
+            if og._overlay_icons[p] then
+                rebuildOverlayGroup(og, og._overlay_w, og._overlay_h)
+                return
+            end
+        end
+
         label_container[1] = og._orig_widget
     end
 end
@@ -308,10 +365,9 @@ end
 function Board:markSelected(square)
     local id_result = Board.chessToId(square)
     if not id_result then return end
-    -- show_selected controls the overlay; learning_mode implies it
     if not self.show_selected and not self.learning_mode then return end
     local button = self.table:getButtonById(id_result)
-    overlayIcon(button, "casualchess/select", self.button_size, self.icon_height)
+    overlayIcon(button, "selected", "casualchess/select", self.button_size, self.icon_height)
     UIManager:setDirty("all", "ui")
 end
 
@@ -319,32 +375,119 @@ function Board:unmarkSelected(square)
     local id_result = Board.chessToId(square)
     if not id_result then return end
     local button = self.table:getButtonById(id_result)
-    clearOverlay(button)
+    clearOverlay(button, "selected")
     UIManager:setDirty("all", "ui")
 end
 
--- ---------------------------------------------------------------------------
--- Learning mode: overlay hint icon on valid move squares
--- ---------------------------------------------------------------------------
+function Board:getLegalMovesForSquare(square)
+    local piece = self.game.get(square)
+    if not piece then return {} end
+    if piece.color == self.game.turn() then
+        return self.game.moves({ verbose = true, square = square })
+    end
+    if not (self.learning_mode and self.opponent_hints) then return {} end
+    return self:getOpponentPotentialMoves(square, piece)
+end
+
+local function squareFromCoords(file, rank)
+    if file < 1 or file > 8 or rank < 1 or rank > 8 then return nil end
+    return string.char(string.byte("a") + file - 1) .. tostring(rank)
+end
+
+local function coordsFromSquare(square)
+    if type(square) ~= "string" or #square ~= 2 then return nil end
+    local file = string.byte(square:sub(1, 1)) - string.byte("a") + 1
+    local rank = tonumber(square:sub(2, 2))
+    if not file or not rank or file < 1 or file > 8 or rank < 1 or rank > 8 then
+        return nil
+    end
+    return file, rank
+end
+
+function Board:getOpponentPotentialMoves(square, piece)
+    local file, rank = coordsFromSquare(square)
+    if not file then return {} end
+
+    local moves = {}
+    local function addIfAvailable(to_square)
+        if not to_square then return false end
+        local target = self.game.get(to_square)
+        if target and target.color == piece.color then return false end
+        moves[#moves + 1] = { from = square, to = to_square }
+        return target == nil
+    end
+
+    local function addRay(df, dr)
+        local f, r = file + df, rank + dr
+        while true do
+            local to_square = squareFromCoords(f, r)
+            if not to_square then break end
+            if not addIfAvailable(to_square) then break end
+            f, r = f + df, r + dr
+        end
+    end
+
+    if piece.type == Chess.PAWN then
+        local dir = (piece.color == Chess.WHITE) and 1 or -1
+        local one = squareFromCoords(file, rank + dir)
+        if one and not self.game.get(one) then
+            moves[#moves + 1] = { from = square, to = one }
+            local start_rank = (piece.color == Chess.WHITE) and 2 or 7
+            local two = squareFromCoords(file, rank + dir * 2)
+            if rank == start_rank and two and not self.game.get(two) then
+                moves[#moves + 1] = { from = square, to = two }
+            end
+        end
+        for _, df in ipairs({ -1, 1 }) do
+            local capture = squareFromCoords(file + df, rank + dir)
+            local target = capture and self.game.get(capture)
+            if target and target.color ~= piece.color then
+                moves[#moves + 1] = { from = square, to = capture }
+            end
+        end
+    elseif piece.type == Chess.KNIGHT then
+        for _, d in ipairs({ {1, 2}, {2, 1}, {2, -1}, {1, -2}, {-1, -2}, {-2, -1}, {-2, 1}, {-1, 2} }) do
+            addIfAvailable(squareFromCoords(file + d[1], rank + d[2]))
+        end
+    elseif piece.type == Chess.BISHOP then
+        for _, d in ipairs({ {1, 1}, {1, -1}, {-1, -1}, {-1, 1} }) do
+            addRay(d[1], d[2])
+        end
+    elseif piece.type == Chess.ROOK then
+        for _, d in ipairs({ {1, 0}, {0, -1}, {-1, 0}, {0, 1} }) do
+            addRay(d[1], d[2])
+        end
+    elseif piece.type == Chess.QUEEN then
+        for _, d in ipairs({ {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1} }) do
+            addRay(d[1], d[2])
+        end
+    elseif piece.type == Chess.KING then
+        for _, d in ipairs({ {1, 0}, {1, 1}, {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}, {0, -1}, {1, -1} }) do
+            addIfAvailable(squareFromCoords(file + d[1], rank + d[2]))
+        end
+    end
+
+    return moves
+end
+
 function Board:markValidMoves(square)
     self._hint_squares = {}
-    -- learning_mode implies show_selected — ensure selected square is marked
     if self.learning_mode and not self.show_selected then
         local id_result = Board.chessToId(square)
         if id_result then
             overlayIcon(self.table:getButtonById(id_result),
-                "casualchess/select", self.button_size, self.icon_height)
+                "selected", "casualchess/select", self.button_size, self.icon_height)
         end
     end
     if not self.learning_mode then return end
-    local legal = self.game.moves({ verbose = true, square = square })
+    local legal = self:getLegalMovesForSquare(square)
     if not legal or #legal == 0 then return end
     for _, m in ipairs(legal) do
         local target = m.to
         local id_result = Board.chessToId(target)
         if id_result then
             local button = self.table:getButtonById(id_result)
-            overlayIcon(button, "casualchess/hint", self.button_size, self.icon_height)
+            overlayIcon(button, "hint", "casualchess/hint", self.button_size, self.icon_height)
             table.insert(self._hint_squares, target)
         end
     end
@@ -353,20 +496,92 @@ end
 
 function Board:clearValidMoves()
     if not self._hint_squares then return end
-    -- if learning_mode implied the selection overlay, clear it too
     if self.learning_mode and not self.show_selected and self.selected then
         local id_result = Board.chessToId(self.selected)
         if id_result then
-            clearOverlay(self.table:getButtonById(id_result))
+            clearOverlay(self.table:getButtonById(id_result), "selected")
         end
     end
     for _, square in ipairs(self._hint_squares) do
         local id_result = Board.chessToId(square)
         if id_result then
-            clearOverlay(self.table:getButtonById(id_result))
+            clearOverlay(self.table:getButtonById(id_result), "hint")
         end
     end
     self._hint_squares = {}
+    UIManager:setDirty("all", "ui")
+end
+
+function Board:markPreviousMove(move)
+    self:clearPreviousMoveHints()
+    if not (self.learning_mode and self.previous_move_hints and move) then return end
+
+    self._previous_move_squares = { move.from, move.to }
+    for _, square in ipairs(self._previous_move_squares) do
+        local id_result = Board.chessToId(square)
+        if id_result then
+            overlayIcon(
+                self.table:getButtonById(id_result),
+                "previous",
+                "casualchess/hint",
+                self.button_size,
+                self.icon_height
+            )
+        end
+    end
+    UIManager:setDirty("all", "ui")
+end
+
+function Board:clearPreviousMoveHints()
+    if not self._previous_move_squares then return end
+    for _, square in ipairs(self._previous_move_squares) do
+        local id_result = Board.chessToId(square)
+        if id_result then
+            clearOverlay(self.table:getButtonById(id_result), "previous")
+        end
+    end
+    self._previous_move_squares = nil
+    UIManager:setDirty("all", "ui")
+end
+
+function Board:getKingSquare(color)
+    local board = self.game.board()
+    for file_idx = 0, BOARD_SIZE - 1 do
+        for rank_idx = 0, BOARD_SIZE - 1 do
+            local element = board[BOARD_SIZE - rank_idx][file_idx + 1]
+            if element and element.type == Chess.KING and element.color == color then
+                return Board.idToPosition(Board.toId(file_idx, rank_idx))
+            end
+        end
+    end
+end
+
+function Board:markCheckHint()
+    self:clearCheckHint()
+    if not (self.learning_mode and self.check_hints and self.game.in_check()) then return end
+
+    local square = self:getKingSquare(self.game.turn())
+    local id_result = square and Board.chessToId(square)
+    if not id_result then return end
+
+    self._check_square = square
+    overlayIcon(
+        self.table:getButtonById(id_result),
+        "check",
+        "casualchess/hint",
+        self.button_size,
+        self.icon_height
+    )
+    UIManager:setDirty("all", "ui")
+end
+
+function Board:clearCheckHint()
+    if not self._check_square then return end
+    local id_result = Board.chessToId(self._check_square)
+    if id_result then
+        clearOverlay(self.table:getButtonById(id_result), "check")
+    end
+    self._check_square = nil
     UIManager:setDirty("all", "ui")
 end
 
@@ -378,7 +593,6 @@ function Board:placePiece(square, piece, color)
     local button = self.table:getButtonById(id_result)
     button:setIcon(icon, self.button_size)
 
-    -- restore square color after icon set
     local original_color = Board.positionToColor(square)
     button.frame.background = original_color
     button.frame.border_color = original_color
@@ -428,7 +642,7 @@ end
 
 function Board.idToPosition(id)
     if type(id) == "number" and id >= 1 and id <= BOARD_SIZE * BOARD_SIZE then
-        local zero_id = id - 1  -- convert back to 0-based for decomposition
+        local zero_id = id - 1
         local file_idx = math.floor(zero_id / BOARD_SIZE)
         local rank_idx = zero_id % BOARD_SIZE
         local file_char = string.char(file_idx + string.byte('a'))

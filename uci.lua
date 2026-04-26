@@ -1,6 +1,4 @@
--- uci.lua: UCI chess engine wrapper for KoChess
--- Manages a Stockfish subprocess via stdin/stdout pipes.
--- All I/O is non-blocking and async via UIManager:scheduleIn / pollingLoop.
+-- Async UCI wrapper for Stockfish.
 
 local Utils  = require("utils")
 
@@ -9,9 +7,6 @@ local M = {}
 local UCIEngine = {}
 UCIEngine.__index = UCIEngine
 
--- ---------------------------------------------------------------------------
--- Line parser — called for every line received from the engine
--- ---------------------------------------------------------------------------
 local function parse_uci_line(line, state)
     line = line:match("^%s*(.-)%s*$")
     if not line or line == "" then return end
@@ -36,7 +31,6 @@ local function parse_uci_line(line, state)
         eng:_trigger("bestmove", mv)
 
     elseif line:find("^option") then
-        -- "option name Skill Level type spin default 20 min 0 max 20"
         local name    = line:match("name%s+(.-)%s+type")
         local kind    = line:match("type%s+(%w+)")
         local default = line:match("default%s+(%S+)")
@@ -52,10 +46,6 @@ local function parse_uci_line(line, state)
     end
 end
 
--- ---------------------------------------------------------------------------
--- spawn(cmd, args) → UCIEngine instance or nil
--- Forks Stockfish and wires up async I/O.
--- ---------------------------------------------------------------------------
 function UCIEngine.spawn(cmd, args)
     local pid, rfd, wfd = Utils.execInSubProcess(cmd, args or {}, true, true)
     if not pid then return nil end
@@ -73,7 +63,6 @@ function UCIEngine.spawn(cmd, args)
         _engine  = self,
     }
 
-    -- Build the non-blocking reader closure
     local _reader = Utils.reader(
         self.fd_read,
         function(line)
@@ -87,7 +76,6 @@ function UCIEngine.spawn(cmd, args)
         end
     end
 
-    -- Build the writer closure
     local _write = Utils.writer(self.fd_write)
     self._write = _write
     self.send = function(data)
@@ -98,9 +86,6 @@ function UCIEngine.spawn(cmd, args)
     return self
 end
 
--- ---------------------------------------------------------------------------
--- Event system
--- ---------------------------------------------------------------------------
 function UCIEngine:on(event, fn)
     self.callbacks[event] = self.callbacks[event] or {}
     table.insert(self.callbacks[event], fn)
@@ -112,25 +97,19 @@ function UCIEngine:_trigger(event, ...)
     for _, fn in ipairs(list) do pcall(fn, ...) end
 end
 
--- ---------------------------------------------------------------------------
--- UCI command helpers
--- ---------------------------------------------------------------------------
-
--- Send "uci" and poll until we receive "uciok" (or give up after ~20s).
--- Fully async — does not block the UI.
 function UCIEngine:uci()
     self.state.uciok   = false
     self.state.readyok = false
-    local ticks_left   = 80   -- 80 × 250ms = 20 seconds max wait
+    local ticks_left   = 80
 
     self.send("uci")
 
     Utils.pollingLoop(0.25, self._reader, function()
         ticks_left = ticks_left - 1
         if self.closed then return false end
-        if self.state.uciok then return false end  -- done
+        if self.state.uciok then return false end
         if ticks_left <= 0 then return false end
-        return true  -- keep polling
+        return true
     end)
 end
 
@@ -141,7 +120,6 @@ end
 function UCIEngine:setOption(name, value)
     value = tostring(value)
     self.send(string.format("setoption name %s value %s", name, value))
-    -- Keep local state in sync so SettingsWidget can read current values
     self.state.options[name] = self.state.options[name]
         or { type = "string", default = nil }
     self.state.options[name].value = value
@@ -160,14 +138,10 @@ function UCIEngine:position(spec)
     self.send(cmd)
 end
 
--- Send "go" and poll until bestmove arrives.
--- The bestmove callback in main.lua handles the actual move application.
--- Fully async — does not block the UI.
 function UCIEngine:go(opts)
     opts = opts or {}
     local cmd = "go"
 
-    -- Emit tokens in the standard UCI order
     local order = {
         "searchmoves", "ponder",
         "wtime", "btime", "winc", "binc", "movestogo",
@@ -189,8 +163,6 @@ function UCIEngine:go(opts)
 
     self.send(cmd)
 
-    -- Poll until bestmove arrives; no timeout needed here since movetime
-    -- is set in the go command itself (engine will always reply).
     Utils.pollingLoop(0.25, self._reader, function()
         return not self.closed and not self.state.bestmove
     end)
