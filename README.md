@@ -7,7 +7,7 @@ It has been derived from the work by Baptiste Fouques & Victor Fariña
 ---
 
 ## Download
-https://github.com/MJCopper/casualkochess.koplugin/releases/download/v0.1.7/casualkochess.koplugin.v0.1.7.zip
+https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.0.0/casualkochess.koplugin.v1.0.0.zip
 
 ---
 
@@ -20,6 +20,7 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v0.1.7/casu
 - Adjustable computer think time (1–10 seconds).
 - Adjustable computer search depth (1-ThinkTime).
 - Adjustable blunder chance (0%-100%), Creates the possibilty for Stockfish to makes mistakes, plays more like a casual human.
+- Board and piece orientation settings.
 - Learning hints, shows valid moves for selected piece.
 - Checkmate, Draw, Stalemate & 50-Move Rule detection.
 - Chess clock with configurable time controls per player (base time + increment).
