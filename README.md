@@ -1,4 +1,4 @@
-# Casual KO Chess for KOReader E-Ink Devices
+# Casual Chess for KOReader E-Ink Devices
 I made this plugin for my own specific use case, it is only tested on my personal Kobo Clara BW. So use it at your own risk. Thought it would be worth making this code available for others interest.
 
 Casual chess plugin for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
@@ -30,23 +30,26 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.0.0/casu
 - Game state saved and restored on close/re-open.
 - Designed for casual play, defaults set to a friendly difficulty.
 
+---
+
 ## Future Features/Known Issues
+
+---
 
 ## Installation
 1. Copy `casualkochess.koplugin/` into your KOReader plugins directory:
    - Kobo: `/mnt/onboard/.adds/koreader/plugins/`
 
 2. Copy the appropriate Stockfish binary into `casualkochess.koplugin/engines/`:
-   - Kobo and other ARM e-ink readers: a compatible `stockfish` ARM binary is included, this step can be skipped
+   - Kobo and other ARM e-ink readers: a compatible `stockfish` ARM binary is included, this step can be skipped.
+   - If no valid engine is available Casual Chess will fall back to a Human Vs Human only game.
 
 3. Restart KOReader. The plugin appears in the main menu as **Casual Chess**.
 
-## Data locations
-- Settings & saved game: `<koreader>/settings/casualkochess.lua`
-- Icons: `<koreader>/resources/icons/casualchess/`
+---
 
 ## License
-This plugin is a derivative of kochess, released under the GNU General Public License v3.  
+This plugin is a derivative of kochess, released under the GNU General Public License v3.
 See `LICENSE` for full terms.
 
 Based on Kochess © Victor Fariña https://github.com/coffman/kochess.koplugin  
