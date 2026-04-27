@@ -19,7 +19,8 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.0.0/casu
 - Adjustable computer skill level (0–20).
 - Adjustable computer think time (1–10 seconds).
 - Adjustable computer search depth (1-ThinkTime).
-- Adjustable blunder chance (0%-100%), Creates the possibilty for Stockfish to makes mistakes, plays more like a casual human.
+- Adjustable blunder chance (0%-60%), Creates the possibilty for Stockfish to makes mistakes, plays more like a casual human.
+- Fallback to a Human Vs Human only game if Stockfish engine is unavailable.
 - Setting to invert pieces at "top of screen" end of board for a more natural Human Vs Human game.
 - Learning hints, shows valid moves for selected piece.
 - Checkmate, Draw, Stalemate & 50-Move Rule detection.
@@ -29,10 +30,6 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.0.0/casu
 - PGN save and load.
 - Game state saved and restored on close/re-open.
 - Designed for casual play, defaults set to a friendly difficulty.
-
----
-
-## Future Features/Known Issues
 
 ---
 
