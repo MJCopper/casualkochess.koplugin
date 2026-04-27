@@ -20,7 +20,6 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.0.0/casu
 - Adjustable computer think time (1–10 seconds).
 - Adjustable computer search depth (1-ThinkTime).
 - Adjustable blunder chance (0%-100%), Creates the possibilty for Stockfish to makes mistakes, plays more like a casual human.
-- Board oriented correctly when Human is white and Computer is black.
 - Setting to invert pieces at "top of screen" end of board for a more natural Human Vs Human game.
 - Learning hints, shows valid moves for selected piece.
 - Checkmate, Draw, Stalemate & 50-Move Rule detection.
