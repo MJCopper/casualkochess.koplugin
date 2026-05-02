@@ -44,6 +44,14 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.6.0/casu
 
 ---
 
+## Screenshots
+
+![Chess board](screenshots/chesshints.jpg)
+![Chess board](screenshots/checkers.jpg)
+![Chess board](screenshots/settings.jpg)
+
+---
+
 ## License
 This plugin is a derivative of kochess, released under the GNU General Public License v3.
 See `LICENSE` for full terms.
