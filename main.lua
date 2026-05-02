@@ -39,6 +39,7 @@ local CheckersBoard = require("checkersboard")
 local CheckersAI = require("checkersai")
 local Timer = require("timer")
 local Uci = require("uci")
+local GoldfishUCI = require("goldfishuci")
 local SettingsWidget = require("settingswidget")
 local Weakening = require("weakening")
 local _ = require("gettext")
@@ -168,6 +169,13 @@ function Kochess:setSetting(key, value)
 end
 
 function Kochess:getEngineStatusText()
+    if self.goldfish_active then
+        local text = "Goldfish Lua fallback is active."
+        if self.engine_status_text and self.engine_status_text ~= "" then
+            text = text .. "\n\nStockfish diagnostic:\n" .. self.engine_status_text
+        end
+        return text
+    end
     if not UCI_ENGINE_PATH then
         return "Stockfish engine not found.\nCopy the engine binary to:\n" .. ENGINES_DIR .. "/"
     end
@@ -202,7 +210,11 @@ end
 
 function Kochess:markEngineInvalid(reason)
     self.engine_status_text = reason or "Stockfish engine is not ready."
-    self:switchToHumanVsHuman()
+    if self:isChessMode() then
+        self:startGoldfishFallback()
+    else
+        self:switchToHumanVsHuman()
+    end
 end
 
 function Kochess:installIconsIfNeeded()
@@ -368,6 +380,51 @@ function Kochess:loadOpenings()
 
 end
 
+function Kochess:startGoldfishFallback()
+    if self.goldfish_active then return end
+
+    local stockfish_status = self.engine_status_text
+    if self.engine and not self.engine.closed then
+        pcall(function() self.engine:quit() end)
+    end
+
+    self.engine_busy = false
+    self.goldfish_active = true
+    self.engine = GoldfishUCI.new()
+    self.engine_status_text = stockfish_status
+    self.engine_last_output = "Goldfish Lua fallback is active."
+
+    self.engine:on("read", function(data)
+        if data then
+            for line in tostring(data):gmatch("[^\r\n]+") do
+                self.engine_last_output = line
+            end
+        end
+    end)
+
+    self.engine:on("uciok", function()
+        self.engine.send("setoption name Skill Level value " .. tostring(self.current_skill or 0))
+        self.engine:ucinewgame()
+        self.engine.send("isready")
+        if not self:getSetting("saved_pgn", "") or self:getSetting("saved_pgn", "") == "" then
+            self:updatePgnLogInitialText()
+        end
+        UIManager:setDirty(self, "ui")
+        if self.game and not self.game.is_human(self.game.turn()) then
+            UIManager:nextTick(function() self:launchCurrentComputerMove() end)
+        end
+    end)
+
+    self.engine:on("bestmove", function(move_uci)
+        self.engine_busy = false
+        if not self.game.is_human(self.game.turn()) then
+            self:uciMove(move_uci)
+        end
+    end)
+
+    self.engine:uci()
+end
+
 function Kochess:initializeEngine()
     if not self:isChessMode() then return end
 
@@ -407,6 +464,13 @@ function Kochess:initializeEngine()
     self.last_cp = nil
     self.engine_status_text = nil
     self.engine_last_output = nil
+    self.goldfish_active = false
+
+    if self:getSetting("force_goldfish", false) then
+        self.engine_status_text = "Goldfish forced for testing."
+        self:startGoldfishFallback()
+        return
+    end
 
     if not UCI_ENGINE_PATH then
         self:markEngineInvalid("Stockfish engine not found.")
@@ -893,6 +957,7 @@ end
 function Kochess:shutdownEngine()
     self._pending_launch = nil
     self.engine_busy = false
+    self.goldfish_active = false
     if self.engine and not self.engine.closed then
         self.engine:quit()
     end
@@ -949,7 +1014,11 @@ function Kochess:showGameOverDialog(result, reason)
     local text
     if result == "1-0" or result == "0-1" then
         local winner = (result == "1-0") and _("White") or _("Black")
-        text = string.format(_("Checkmate! %s wins."), winner)
+        if self:isCheckersMode() then
+            text = string.format(_("%s Wins!"), winner)
+        else
+            text = string.format(_("Checkmate! %s wins."), winner)
+        end
     else
         local label
         if not reason then

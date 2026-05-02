@@ -62,6 +62,7 @@ function EngineWidget:new(opts)
         engine_depth    = init.engine_depth    or 2,
         engine_movetime = init.engine_movetime or 1,
         blunder_chance  = init.blunder_chance  or 0.20,
+        force_goldfish  = init.force_goldfish  and true or false,
     }
 
     return o
@@ -87,6 +88,9 @@ function EngineWidget:show()
 end
 
 function EngineWidget:eloLabel()
+    if self:isGoldfishActive() then
+        return "Goldfish ELO: ~600"
+    end
     local elo = computeElo(
         tonumber(self.changes.skill_level)     or 0,
         tonumber(self.changes.engine_depth)    or 0,
@@ -94,6 +98,12 @@ function EngineWidget:eloLabel()
         tonumber(self.changes.blunder_chance)  or 0
     )
     return _("Estimated ELO") .. ": ~" .. tostring(elo)
+end
+
+function EngineWidget:isGoldfishActive()
+    local chess_mode = not (self.parent and self.parent.isCheckersMode and self.parent:isCheckersMode())
+    return chess_mode
+        and (self.changes.force_goldfish or (self.parent and self.parent.goldfish_active))
 end
 
 function EngineWidget:refreshEloLabel()
@@ -277,9 +287,34 @@ function EngineWidget:blunderLabelText()
     return _("Blunder Chance") .. ": " .. tostring(pct) .. "%"
 end
 
+function EngineWidget:buildGoldfishButton()
+    local w = self.dialog.element_width
+    local h = Screen:scaleBySize(32)
+    local function label()
+        return (self.changes.force_goldfish and "☑ " or "☐ ") .. _("Goldfish (testing only)")
+    end
+    self.goldfishButton = ButtonWidget:new{
+        text    = label(),
+        width   = w,
+        height  = h,
+        radius  = Size.radius.button,
+        padding = Size.padding.small,
+        align   = "left",
+        callback = function()
+            self.changes.force_goldfish = not self.changes.force_goldfish
+            self.goldfishButton.text = label()
+            self.goldfishButton:init()
+            self:refreshEloLabel()
+            self:markDirty()
+            UIManager:setDirty(self.dialog, "ui")
+        end,
+    }
+end
+
 function EngineWidget:assembleContent()
     local D = self.dialog
     local w = D.element_width
+    self:buildGoldfishButton()
 
     self.eloLabelWidget = TextWidget:new{
         text = self:eloLabel(),
@@ -335,6 +370,13 @@ function EngineWidget:assembleContent()
             VerticalSpan:new{ width = Size.padding.large },
 
             CenterContainer:new{
+                dimen = Geometry:new{ w=D.width, h=self.goldfishButton:getSize().h },
+                self.goldfishButton,
+            },
+
+            VerticalSpan:new{ width = Size.padding.large },
+
+            CenterContainer:new{
                 dimen = Geometry:new{
                     w = D.title_bar:getSize().w,
                     h = D.button_table:getSize().h,
@@ -375,6 +417,7 @@ function EngineWidget:resetToDefaults()
     self.changes.engine_depth    = 2
     self.changes.engine_movetime = 1
     self.changes.blunder_chance  = 0.20
+    self.changes.force_goldfish  = false
     self:saveAndClose()
 end
 

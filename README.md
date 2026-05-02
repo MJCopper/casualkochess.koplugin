@@ -1,11 +1,11 @@
-# Casual Chess for KOReader E-Ink Devices
-Casual Chess plugin for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
+# Casual Chess & Checkers for KOReader E-Ink Devices
+Casual Chess & Checkers plugin for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
 It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 ---
 
 ## Download
-https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.0.0/casualkochess.koplugin.v1.0.0.zip
+https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.6.0/casualkochess.koplugin.v1.6.0.zip
 
 ---
 
@@ -18,7 +18,8 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.0.0/casu
 - Adjustable computer think time (1–10 seconds).
 - Adjustable computer search depth (1-ThinkTime).
 - Adjustable blunder chance (0%-60%), Creates the possibilty for Stockfish to makes mistakes, plays more like a casual human.
-- Fallback to a Human Vs Human only game if Stockfish engine is unavailable.
+- Fallback to custom basic Goldfish engine if Stockfish engine is unavailable.
+- Switch between Chess & Checkers.
 - Setting to invert pieces at "top of screen" end of board for a more natural Human Vs Human game.
 - Learning hints, shows valid moves for selected piece.
 - Checkmate, Draw, Stalemate & 50-Move Rule detection.
@@ -37,7 +38,7 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.0.0/casu
 
 2. Copy the appropriate Stockfish binary into `casualkochess.koplugin/engines/`:
    - Kobo and other ARM e-ink readers: a compatible `stockfish` ARM binary is included, this step can be skipped.
-   - If no valid engine is available Casual Chess will fall back to a Human Vs Human only game.
+   - If no valid engine is available Casual Chess will fall back to basic Goldfish engine.
 
 3. Restart KOReader. The plugin appears in the main menu as **Casual Chess**.
 

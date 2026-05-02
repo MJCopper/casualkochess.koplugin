@@ -92,6 +92,7 @@ function SettingsWidget:initializeState()
         engine_depth    = (self.parent and self.parent.engine_depth) or 2,
         engine_movetime = (self.parent and self.parent.engine_movetime) or 1,
         blunder_chance  = (self.parent and self.parent.blunder_chance) or 0.20,
+        force_goldfish  = (self.parent and self.parent.getSetting and self.parent:getSetting("force_goldfish", false)) or false,
         learning_mode   = (self.parent and self.parent.board and self.parent.board.learning_mode == true) or false,
         show_selected   = not (self.parent and self.parent.board and self.parent.board.show_selected == false),
         previous_move_hints = (self.parent and self.parent.board and self.parent.board.previous_move_hints == true) or false,
@@ -392,6 +393,9 @@ function SettingsWidget:getCurrentDifficultyPosition()
 end
 
 function SettingsWidget:getDifficultyLabel()
+    if not self:isCheckersMode() and (self.changes.force_goldfish or (self.parent and self.parent.goldfish_active)) then
+        return "Goldfish ELO: ~600"
+    end
     local pos = self:getCurrentDifficultyPosition()
     if pos then
         local p = self.difficultyPresets[pos]
@@ -443,12 +447,14 @@ function SettingsWidget:buildEngineButton()
                     engine_depth    = self.changes.engine_depth,
                     engine_movetime = self.changes.engine_movetime,
                     blunder_chance  = self.changes.blunder_chance,
+                    force_goldfish  = self.changes.force_goldfish,
                 },
                 onSave = function(saved)
                     self.changes.skill_level     = saved.skill_level
                     self.changes.engine_depth    = saved.engine_depth
                     self.changes.engine_movetime = saved.engine_movetime
                     self.changes.blunder_chance  = saved.blunder_chance
+                    self.changes.force_goldfish  = saved.force_goldfish
                     self:applyEngineChanges(saved)
                     self:refreshDifficultyLabel()
                     self:markDirty()
@@ -548,10 +554,19 @@ function SettingsWidget:applyEngineChanges(s)
     end
     if self.parent and self.parent.setSetting then
         local p = self.parent
+        local force_goldfish = s.force_goldfish and true or false
         p:setSetting("skill_level",     v)
         p:setSetting("engine_depth",    self.parent.engine_depth)
         p:setSetting("engine_movetime", self.parent.engine_movetime)
         p:setSetting("blunder_chance",  self.parent.blunder_chance)
+        p:setSetting("force_goldfish",  force_goldfish)
+        if force_goldfish then
+            p.engine_status_text = "Goldfish forced for testing."
+            if p.startGoldfishFallback then p:startGoldfishFallback() end
+        elseif p.goldfish_active and p.isChessMode and p:isChessMode() then
+            if p.shutdownEngine then p:shutdownEngine() end
+            if p.initializeEngine then p:initializeEngine() end
+        end
     end
 end
 
@@ -645,6 +660,7 @@ function SettingsWidget:resetToDefaults()
     self.changes.engine_depth    = 2
     self.changes.blunder_chance  = 0.20
     self.changes.engine_movetime = 1
+    self.changes.force_goldfish  = false
     self.changes.learning_mode   = false
     self.changes.show_selected   = true
     self.changes.previous_move_hints = false
