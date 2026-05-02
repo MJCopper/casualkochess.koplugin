@@ -46,11 +46,11 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.6.0/casu
 
 ## Screenshots
 
-<p>
-  <img src="screenshots/chesshints.jpg" alt="Hints" width="300" style="padding: 8px;">
-  <img src="screenshots/checkers.jpg" alt="Checkers" width="300" style="padding: 8px;">
-  <img src="screenshots/settings.jpg" alt="Settings" width="300" style="padding: 8px;">
-  <img src="screenshots/interface.jpg" alt="Settings" width="300" style="padding: 8px;">
+<p align="center">
+  <img src="screenshots/chesshints.jpg" alt="Hints" width="300" style="padding: 16px;">
+  <img src="screenshots/checkers.jpg" alt="Checkers" width="300" style="padding: 16px;">
+  <img src="screenshots/settings.jpg" alt="Settings" width="300" style="padding: 16px;">
+  <img src="screenshots/interface.jpg" alt="Settings" width="300" style="padding: 16px;">
 </p>
 
 ---
