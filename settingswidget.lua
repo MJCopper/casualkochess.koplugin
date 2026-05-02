@@ -26,6 +26,8 @@ local InterfaceWidget = require("interfacewidget")
 local _ = require("gettext")
 
 local BACKGROUND_COLOR = Blitbuffer.COLOR_WHITE
+local MODE_CHESS = "chess"
+local MODE_CHECKERS = "checkers"
 
 local SettingsWidget = {}
 SettingsWidget.__index = SettingsWidget
@@ -84,6 +86,7 @@ function SettingsWidget:initializeState()
             [Chess.WHITE] = self.game.is_human(Chess.WHITE),
             [Chess.BLACK] = self.game.is_human(Chess.BLACK),
         },
+        game_mode      = (self.parent and self.parent.getSetting and self.parent:getSetting("game_mode", MODE_CHESS)) or MODE_CHESS,
         skill_level     = currentSkill,
         elo_strength    = currentElo,
         engine_depth    = (self.parent and self.parent.engine_depth) or 2,
@@ -110,7 +113,7 @@ end
 
 function SettingsWidget:show()
     local dlg = InputDialog:new{
-        title          = _("Chess Settings"),
+        title          = _("Game Settings"),
         save_callback  = function() self:applyAndClose() end,
         dismiss_callback = function()
             if self.onCancel then self.onCancel() end
@@ -119,6 +122,7 @@ function SettingsWidget:show()
     dlg.element_width = math.floor(dlg.width * 0.8)
     self.dialog = dlg
 
+    self:buildGameModeGroup()
     self:buildPlayerTypeGroup()
     self:buildDifficultyGroup()
     self:buildInterfaceButton()
@@ -127,6 +131,27 @@ function SettingsWidget:show()
 
     dlg:refocusWidget()
     UIManager:show(dlg)
+end
+
+function SettingsWidget:isCheckersMode()
+    return self.changes.game_mode == MODE_CHECKERS
+end
+
+function SettingsWidget:buildGameModeGroup()
+    local w = self.dialog.element_width
+    local function onSelect(entry)
+        self.changes.game_mode = entry.mode
+        self:markDirty()
+    end
+    self.gameModeGroup = RadioButtonTable:new{
+        width = w,
+        radio_buttons = {
+            {{ text = _("Chess"), checked = self.changes.game_mode ~= MODE_CHECKERS, mode = MODE_CHESS }},
+            {{ text = _("Checkers"), checked = self.changes.game_mode == MODE_CHECKERS, mode = MODE_CHECKERS }},
+        },
+        button_select_callback = onSelect,
+        parent = self.dialog,
+    }
 end
 
 function SettingsWidget:markDirty()
@@ -402,7 +427,7 @@ function SettingsWidget:buildEngineButton()
         radius  = Size.radius.button,
         padding = Size.padding.small,
         callback = function()
-            if not (self.engine and self.engine.state and self.engine.state.uciok) then
+            if not self:isCheckersMode() and not (self.engine and self.engine.state and self.engine.state.uciok) then
                 local text = _("Stockfish engine is not ready.")
                 if self.parent and self.parent.getEngineStatusText then
                     text = self.parent:getEngineStatusText()
@@ -546,6 +571,13 @@ function SettingsWidget:assembleContent()
             VerticalSpan:new{ width = Size.padding.large },
 
             CenterContainer:new{
+                dimen = Geometry:new{ w=D.width, h=self.gameModeGroup:getSize().h },
+                self.gameModeGroup,
+            },
+
+            VerticalSpan:new{ width = Size.padding.large },
+
+            CenterContainer:new{
                 dimen = Geometry:new{ w=D.width, h=self.playerSettingsGroup:getSize().h },
                 self.playerSettingsGroup
             },
@@ -609,6 +641,7 @@ end
 
 function SettingsWidget:resetToDefaults()
     self.changes.skill_level     = 0
+    self.changes.game_mode       = MODE_CHESS
     self.changes.engine_depth    = 2
     self.changes.blunder_chance  = 0.20
     self.changes.engine_movetime = 1
@@ -653,6 +686,7 @@ function SettingsWidget:applyAndClose()
 
     if self.parent and self.parent.setSetting then
         local p = self.parent
+        p:setSetting("game_mode",      s.game_mode or MODE_CHESS)
         p:setSetting("human_white",    s.human_choice[Chess.WHITE])
         p:setSetting("human_black",    s.human_choice[Chess.BLACK])
         p:setSetting("learning_mode",  s.learning_mode and true or false)

@@ -45,7 +45,6 @@ EngineWidget.__index = EngineWidget
 EngineWidget.computeElo = computeElo
 
 function EngineWidget:new(opts)
-    assert(opts.engine,  "engine is required")
     assert(opts.parent,  "parent is required")
     assert(opts.onSave,  "onSave callback is required")
 

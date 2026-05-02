@@ -34,6 +34,9 @@ local ConfirmBox = require("ui/widget/confirmbox")
 
 local Chess = require("chess")
 local ChessBoard = require("board")
+local CheckersGame = require("checkersgame")
+local CheckersBoard = require("checkersboard")
+local CheckersAI = require("checkersai")
 local Timer = require("timer")
 local Uci = require("uci")
 local SettingsWidget = require("settingswidget")
@@ -94,6 +97,8 @@ local BACKGROUND_COLOR = Blitbuffer.COLOR_WHITE
 local PGN_LOG_FONT = "smallinfofont"
 local PGN_LOG_FONT_SIZE = 14
 local TOOLBAR_PADDING = 4
+local MODE_CHESS = "chess"
+local MODE_CHECKERS = "checkers"
 
 local Kochess = FrameContainer:extend{
     name = "casualkochess",
@@ -231,18 +236,36 @@ function Kochess:startGame()
         UIManager:close(self)
     end
 
+    self.game_mode = self:getSetting("game_mode", MODE_CHESS)
     self:initializeGameLogic()
-    self:initializeEngine()
-    self:loadOpenings()
+    if self:isChessMode() then
+        self:initializeEngine()
+        self:loadOpenings()
+    else
+        self:shutdownEngine()
+    end
     self:buildUILayout()
     self:updateTimerDisplay()
     self:updatePlayerDisplay()
     self:restoreGameState()
     self.board:updateBoard()
     UIManager:show(self)
+    self:launchCurrentComputerMove()
+end
+
+function Kochess:isChessMode()
+    return self.game_mode ~= MODE_CHECKERS
+end
+
+function Kochess:isCheckersMode()
+    return self.game_mode == MODE_CHECKERS
 end
 
 function Kochess:saveGameState()
+    if self:isCheckersMode() then
+        self:saveCheckersGameState()
+        return
+    end
     local pgn = self.game.pgn and self.game.pgn() or ""
     self:setSetting("saved_pgn", pgn)
     self:setSetting("saved_time_white", self.timer:getRemainingTime(Chess.WHITE))
@@ -251,6 +274,10 @@ function Kochess:saveGameState()
 end
 
 function Kochess:restoreGameState()
+    if self:isCheckersMode() then
+        self:restoreCheckersGameState()
+        return
+    end
     local pgn = self:getSetting("saved_pgn", "")
     if not pgn or pgn == "" then return end
 
@@ -284,7 +311,39 @@ function Kochess:restoreGameState()
     self:updatePlayerDisplay()
 end
 
+function Kochess:saveCheckersGameState()
+    if not (self.game and self.game.export_state) then return end
+    self:setSetting("saved_checkers_state", self.game:export_state())
+    self:setSetting("saved_checkers_time_white", self.timer:getRemainingTime(Chess.WHITE))
+    self:setSetting("saved_checkers_time_black", self.timer:getRemainingTime(Chess.BLACK))
+    self:setSetting("saved_checkers_running", self.running)
+end
+
+function Kochess:restoreCheckersGameState()
+    local state = self:getSetting("saved_checkers_state", nil)
+    if type(state) ~= "table" then return end
+
+    local ok = self.game.load_state and self.game:load_state(state)
+    if not ok then
+        self:setSetting("saved_checkers_state", "")
+        return
+    end
+
+    local tw = self:getSetting("saved_checkers_time_white", nil)
+    local tb = self:getSetting("saved_checkers_time_black", nil)
+    if tw then self.timer.time[Chess.WHITE] = tw end
+    if tb then self.timer.time[Chess.BLACK] = tb end
+
+    self.timer.currentPlayer = self.game.turn()
+    self.running = self:getSetting("saved_checkers_running", false)
+
+    self:updatePgnLog()
+    self:updateTimerDisplay()
+    self:updatePlayerDisplay()
+end
+
 function Kochess:loadOpenings()
+    if not self:isChessMode() then return end
     if self.openings then return end
 
     self.openings = {}
@@ -310,6 +369,7 @@ function Kochess:loadOpenings()
 end
 
 function Kochess:initializeEngine()
+    if not self:isChessMode() then return end
 
     local CASUAL = {
         skill_level     = 0,
@@ -464,9 +524,9 @@ function Kochess:initializeEngine()
 end
 
 function Kochess:initializeGameLogic()
-    self.game = Chess:new()
+    self.game = self:isCheckersMode() and CheckersGame:new() or Chess:new()
     self.game.reset()
-    self.game.initial_fen = self.game.fen()
+    self.game.initial_fen = self.game.fen and self.game.fen() or nil
     local human_white = self:getSetting("human_white", true)
     local human_black = self:getSetting("human_black", false)
     self.game.set_human(Chess.WHITE, human_white)
@@ -480,11 +540,16 @@ function Kochess:initializeGameLogic()
         {[Chess.WHITE]=incr_w, [Chess.BLACK]=incr_b},
         function() self:updateTimerDisplay() end)
     self.running = false
-    self.weakening = Weakening:new(self.game, self.blunder_chance or 0.0)
+    if self:isChessMode() then
+        self.weakening = Weakening:new(self.game, self.blunder_chance or 0.0)
+    else
+        self.weakening = nil
+    end
 end
 
 function Kochess:initializeBoard(board_h)
-    self.board = ChessBoard:new{
+    local BoardClass = self:isCheckersMode() and CheckersBoard or ChessBoard
+    self.board = BoardClass:new{
         game          = self.game,
         width         = self.full_width,
         height        = board_h or math.floor(0.7 * self.full_height),
@@ -558,19 +623,22 @@ function Kochess:buildUILayout()
 
     self.pgn_log = self:createPgnLogWidget("", inner_w, pgn_h)
 
-    local toolbar = HorizontalGroup:new{
-        self:createToolbarButton("chevron.left",       toolbar_btn_w, toolbar_btn_h, function() self:handleUndoMove(false) end),
-        self:createToolbarButton("chevron.right",      toolbar_btn_w, toolbar_btn_h, function() self:handleRedoMove(false) end),
-        self:createToolbarButton("bookmark",           toolbar_btn_w, toolbar_btn_h, function() UIManager:show(self:openSaveDialog()) end),
-        self:createToolbarButton("appbar.filebrowser", toolbar_btn_w, toolbar_btn_h, function() self:openLoadPgnDialog() end),
-        self:createToolbarButton("plus",               toolbar_btn_w, toolbar_btn_h, function()
-            UIManager:show(ConfirmBox:new{
-                text        = _("Start a new game?"),
-                ok_text     = _("New Game"),
-                ok_callback = function() self:resetGame() end,
-            })
-        end),
+    local toolbar_buttons = {
+        self:createToolbarButton("chevron.left", toolbar_btn_w, toolbar_btn_h, function() self:handleUndoMove(false) end),
+        self:createToolbarButton("chevron.right", toolbar_btn_w, toolbar_btn_h, function() self:handleRedoMove(false) end),
     }
+    if self:isChessMode() then
+        toolbar_buttons[#toolbar_buttons + 1] = self:createToolbarButton("bookmark", toolbar_btn_w, toolbar_btn_h, function() UIManager:show(self:openSaveDialog()) end)
+        toolbar_buttons[#toolbar_buttons + 1] = self:createToolbarButton("appbar.filebrowser", toolbar_btn_w, toolbar_btn_h, function() self:openLoadPgnDialog() end)
+    end
+    toolbar_buttons[#toolbar_buttons + 1] = self:createToolbarButton("plus", toolbar_btn_w, toolbar_btn_h, function()
+        UIManager:show(ConfirmBox:new{
+            text        = _("Start a new game?"),
+            ok_text     = _("New Game"),
+            ok_callback = function() self:resetGame() end,
+        })
+    end)
+    local toolbar = HorizontalGroup:new(toolbar_buttons)
 
     local log_section = VerticalGroup:new{
         width = self.full_width,
@@ -606,6 +674,7 @@ function Kochess:updatePgnLogInitialText()
 end
 
 function Kochess:detectOpening()
+    if not self:isChessMode() then return nil end
     if not self.openings then return nil end
 
     local hist = self.game.history and self.game:history() or nil
@@ -636,6 +705,7 @@ function Kochess:detectOpening()
 end
 
 local function formatEval(self)
+    if self:isCheckersMode() then return "" end
     local mate = self.last_mate
     if mate ~= nil then
         local m = tonumber(mate) or 0
@@ -716,6 +786,10 @@ end
 function Kochess:launchNextMove()
     self.timer:switchPlayer()
     self:updateTimerDisplay()
+    if self:isCheckersMode() then
+        if not self.game.is_human(self.game.turn()) then self:launchCheckersAI() end
+        return
+    end
     if not (self.engine and self.engine.state.uciok and not self.game.is_human(self.game.turn())) then return end
 
     local is_cvc = not self.game.is_human(Chess.WHITE) and not self.game.is_human(Chess.BLACK)
@@ -734,6 +808,15 @@ function Kochess:launchNextMove()
 end
 
 function Kochess:launchCurrentComputerMove()
+    if self:isCheckersMode() then
+        if self.game.is_human(self.game.turn()) then return end
+        self.running = true
+        self.timer.currentPlayer = self.game.turn()
+        self.timer:start()
+        self:updateTimerDisplay()
+        self:launchCheckersAI()
+        return
+    end
     if not (self.engine and self.engine.state.uciok and not self.game.is_human(self.game.turn())) then return end
 
     self.running = true
@@ -743,7 +826,25 @@ function Kochess:launchCurrentComputerMove()
     self:launchUCI()
 end
 
+function Kochess:launchCheckersAI()
+    if self.checkers_busy or self.game.is_human(self.game.turn()) then return end
+    self.checkers_busy = true
+    UIManager:scheduleIn(0.2, function()
+        self.checkers_busy = false
+        if not self:isCheckersMode() or self.game.is_human(self.game.turn()) then return end
+        local depth = tonumber(self.engine_depth) or 4
+        if depth == 0 then depth = 6 end
+        depth = math.max(1, math.min(6, depth))
+        local move = CheckersAI.bestMove(self.game, depth, self.blunder_chance or 0)
+        if move then
+            local played = self.game:move{ from = move.from, to = move.to }
+            if played then self.board:handleGameMove(played) end
+        end
+    end)
+end
+
 function Kochess:uciMove(str)
+    if not self:isChessMode() then return end
     if self.weakening then
         str = self.weakening:maybeWeaken(str)
     end
@@ -752,6 +853,7 @@ function Kochess:uciMove(str)
 end
 
 function Kochess:launchUCI()
+    if not self:isChessMode() then return end
     if not (self.engine and self.engine.state and self.engine.state.uciok) then return end
     if self.engine_busy then return end
     self.engine_busy = true
@@ -784,6 +886,7 @@ end
 function Kochess:stopUCI()
     self._pending_launch = nil
     self.engine_busy = false
+    self.checkers_busy = false
     if self.engine and not self.engine.closed and self.engine.state.uciok then self.engine.send("stop") end
 end
 
@@ -828,11 +931,15 @@ end
 
 function Kochess:resetGame()
     self:stopUCI(); self.game.reset(); self.timer:reset()
-    if self.engine then self.engine.send("ucinewgame") end
+    if self.engine and self:isChessMode() then self.engine.send("ucinewgame") end
     self.board:clearValidMoves()
     self.board:clearPreviousMoveHints()
     self.board:clearCheckHint()
-    self:setSetting("saved_pgn", "")
+    if self:isCheckersMode() then
+        self:setSetting("saved_checkers_state", "")
+    else
+        self:setSetting("saved_pgn", "")
+    end
     self.running = false
     self:updateTimerDisplay(); self:updatePlayerDisplay(); self.board:updateBoard(); UIManager:setDirty(self, "ui")
     self:launchCurrentComputerMove()
@@ -906,6 +1013,13 @@ function Kochess:createStatusBar()
                 parent  = self,
                 onApply = function()
                     self:stopUCI()
+                    local mode = self:getSetting("game_mode", MODE_CHESS)
+                    if mode ~= self.game_mode then
+                        self.game_mode = mode
+                        self:shutdownEngine()
+                        UIManager:nextTick(function() self:startGame() end)
+                        return
+                    end
                     self.timer:reset()
                     self:updateBoardOrientation()
                     self:updatePlayerDisplay()
@@ -929,6 +1043,7 @@ function Kochess:createStatusBar()
 end
 
 function Kochess:openLoadPgnDialog()
+    if not self:isChessMode() then return end
     UIManager:show(
         PathChooser:new{
             path = GAMES_PATH,
@@ -970,6 +1085,7 @@ function Kochess:openLoadPgnDialog()
 end
 
 function Kochess:handleSaveFile(dialog, filename_input, current_dir)
+    if not self:isChessMode() then return end
     filename_input:onCloseKeyboard()
     local dir = current_dir
     local file = filename_input:getText():gsub("\n$", "")
@@ -1000,6 +1116,7 @@ function Kochess:handleSaveFile(dialog, filename_input, current_dir)
 end
 
 function Kochess:openSaveDialog()
+    if not self:isChessMode() then return end
     local current_dir = GAMES_PATH
     local dialog
     local filename_input
