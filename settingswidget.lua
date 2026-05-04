@@ -28,6 +28,7 @@ local _ = require("gettext")
 local BACKGROUND_COLOR = Blitbuffer.COLOR_WHITE
 local MODE_CHESS = "chess"
 local MODE_CHECKERS = "checkers"
+local MODE_FOXHOUND = "foxhound"
 
 local SettingsWidget = {}
 SettingsWidget.__index = SettingsWidget
@@ -138,6 +139,10 @@ function SettingsWidget:isCheckersMode()
     return self.changes.game_mode == MODE_CHECKERS
 end
 
+function SettingsWidget:isFoxHoundMode()
+    return self.changes.game_mode == MODE_FOXHOUND
+end
+
 function SettingsWidget:buildGameModeGroup()
     local w = self.dialog.element_width
     local function onSelect(entry)
@@ -147,8 +152,9 @@ function SettingsWidget:buildGameModeGroup()
     self.gameModeGroup = RadioButtonTable:new{
         width = w,
         radio_buttons = {
-            {{ text = _("Chess"), checked = self.changes.game_mode ~= MODE_CHECKERS, mode = MODE_CHESS }},
+            {{ text = _("Chess"), checked = self.changes.game_mode ~= MODE_CHECKERS and self.changes.game_mode ~= MODE_FOXHOUND, mode = MODE_CHESS }},
             {{ text = _("Checkers"), checked = self.changes.game_mode == MODE_CHECKERS, mode = MODE_CHECKERS }},
+            {{ text = _("Fox and Hounds"), checked = self.changes.game_mode == MODE_FOXHOUND, mode = MODE_FOXHOUND }},
         },
         button_select_callback = onSelect,
         parent = self.dialog,
@@ -393,7 +399,7 @@ function SettingsWidget:getCurrentDifficultyPosition()
 end
 
 function SettingsWidget:getDifficultyLabel()
-    if not self:isCheckersMode() and (self.changes.force_goldfish or (self.parent and self.parent.goldfish_active)) then
+    if not self:isCheckersMode() and not self:isFoxHoundMode() and (self.changes.force_goldfish or (self.parent and self.parent.goldfish_active)) then
         return "Goldfish ELO: ~600"
     end
     local pos = self:getCurrentDifficultyPosition()
@@ -431,7 +437,7 @@ function SettingsWidget:buildEngineButton()
         radius  = Size.radius.button,
         padding = Size.padding.small,
         callback = function()
-            if not self:isCheckersMode() and not (self.engine and self.engine.state and self.engine.state.uciok) then
+            if not self:isCheckersMode() and not self:isFoxHoundMode() and not (self.engine and self.engine.state and self.engine.state.uciok) then
                 local text = _("Stockfish engine is not ready.")
                 if self.parent and self.parent.getEngineStatusText then
                     text = self.parent:getEngineStatusText()

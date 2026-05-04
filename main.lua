@@ -37,6 +37,9 @@ local ChessBoard = require("board")
 local CheckersGame = require("checkersgame")
 local CheckersBoard = require("checkersboard")
 local CheckersAI = require("checkersai")
+local FoxHoundGame = require("foxhoundgame")
+local FoxHoundBoard = require("foxhoundboard")
+local FoxHoundAI = require("foxhoundai")
 local Timer = require("timer")
 local Uci = require("uci")
 local GoldfishUCI = require("goldfishuci")
@@ -100,6 +103,7 @@ local PGN_LOG_FONT_SIZE = 14
 local TOOLBAR_PADDING = 4
 local MODE_CHESS = "chess"
 local MODE_CHECKERS = "checkers"
+local MODE_FOXHOUND = "foxhound"
 
 local Kochess = FrameContainer:extend{
     name = "casualkochess",
@@ -266,14 +270,22 @@ function Kochess:startGame()
 end
 
 function Kochess:isChessMode()
-    return self.game_mode ~= MODE_CHECKERS
+    return self.game_mode ~= MODE_CHECKERS and self.game_mode ~= MODE_FOXHOUND
 end
 
 function Kochess:isCheckersMode()
     return self.game_mode == MODE_CHECKERS
 end
 
+function Kochess:isFoxHoundMode()
+    return self.game_mode == MODE_FOXHOUND
+end
+
 function Kochess:saveGameState()
+    if self:isFoxHoundMode() then
+        self:saveFoxHoundGameState()
+        return
+    end
     if self:isCheckersMode() then
         self:saveCheckersGameState()
         return
@@ -285,7 +297,20 @@ function Kochess:saveGameState()
     self:setSetting("saved_running", self.running)
 end
 
+function Kochess:clearSavedGameStates()
+    self:setSetting("saved_pgn", "")
+    self:setSetting("saved_running", false)
+    self:setSetting("saved_checkers_state", "")
+    self:setSetting("saved_checkers_running", false)
+    self:setSetting("saved_foxhound_state", "")
+    self:setSetting("saved_foxhound_running", false)
+end
+
 function Kochess:restoreGameState()
+    if self:isFoxHoundMode() then
+        self:restoreFoxHoundGameState()
+        return
+    end
     if self:isCheckersMode() then
         self:restoreCheckersGameState()
         return
@@ -348,6 +373,37 @@ function Kochess:restoreCheckersGameState()
 
     self.timer.currentPlayer = self.game.turn()
     self.running = self:getSetting("saved_checkers_running", false)
+
+    self:updatePgnLog()
+    self:updateTimerDisplay()
+    self:updatePlayerDisplay()
+end
+
+function Kochess:saveFoxHoundGameState()
+    if not (self.game and self.game.export_state) then return end
+    self:setSetting("saved_foxhound_state", self.game:export_state())
+    self:setSetting("saved_foxhound_time_white", self.timer:getRemainingTime(Chess.WHITE))
+    self:setSetting("saved_foxhound_time_black", self.timer:getRemainingTime(Chess.BLACK))
+    self:setSetting("saved_foxhound_running", self.running)
+end
+
+function Kochess:restoreFoxHoundGameState()
+    local state = self:getSetting("saved_foxhound_state", nil)
+    if type(state) ~= "table" then return end
+
+    local ok = self.game.load_state and self.game:load_state(state)
+    if not ok then
+        self:setSetting("saved_foxhound_state", "")
+        return
+    end
+
+    local tw = self:getSetting("saved_foxhound_time_white", nil)
+    local tb = self:getSetting("saved_foxhound_time_black", nil)
+    if tw then self.timer.time[Chess.WHITE] = tw end
+    if tb then self.timer.time[Chess.BLACK] = tb end
+
+    self.timer.currentPlayer = self.game.turn()
+    self.running = self:getSetting("saved_foxhound_running", false)
 
     self:updatePgnLog()
     self:updateTimerDisplay()
@@ -552,6 +608,9 @@ function Kochess:initializeEngine()
         end
 
         UIManager:setDirty(self, "ui")
+        if self.game and not self.game.is_human(self.game.turn()) then
+            UIManager:nextTick(function() self:launchCurrentComputerMove() end)
+        end
     end)
 
     self.engine:on("bestmove", function(move_uci)
@@ -588,7 +647,13 @@ function Kochess:initializeEngine()
 end
 
 function Kochess:initializeGameLogic()
-    self.game = self:isCheckersMode() and CheckersGame:new() or Chess:new()
+    if self:isFoxHoundMode() then
+        self.game = FoxHoundGame:new()
+    elseif self:isCheckersMode() then
+        self.game = CheckersGame:new()
+    else
+        self.game = Chess:new()
+    end
     self.game.reset()
     self.game.initial_fen = self.game.fen and self.game.fen() or nil
     local human_white = self:getSetting("human_white", true)
@@ -612,7 +677,8 @@ function Kochess:initializeGameLogic()
 end
 
 function Kochess:initializeBoard(board_h)
-    local BoardClass = self:isCheckersMode() and CheckersBoard or ChessBoard
+    local BoardClass = self:isFoxHoundMode() and FoxHoundBoard
+        or (self:isCheckersMode() and CheckersBoard or ChessBoard)
     self.board = BoardClass:new{
         game          = self.game,
         width         = self.full_width,
@@ -769,7 +835,7 @@ function Kochess:detectOpening()
 end
 
 local function formatEval(self)
-    if self:isCheckersMode() then return "" end
+    if self:isCheckersMode() or self:isFoxHoundMode() then return "" end
     local mate = self.last_mate
     if mate ~= nil then
         local m = tonumber(mate) or 0
@@ -820,6 +886,14 @@ function Kochess:handleUndoMove(all) self:stopUCI(); self.timer:stop(); if all t
 function Kochess:handleRedoMove(all) self:stopUCI(); self.timer:stop(); if all then while self.game.redo() do end else self.game.redo() end; self.board:updateBoard(); self:updatePgnLog(); UIManager:setDirty(self, "ui"); self.timer:start() end
 
 function Kochess:onMoveExecuted(move)
+    if self:isFoxHoundMode() and not move then
+        self:updatePgnLog()
+        self:updateTimerDisplay()
+        self:updatePlayerDisplay()
+        self:launchCurrentComputerMove()
+        UIManager:setDirty(self, "ui")
+        return
+    end
 
     self.running = true
 
@@ -850,6 +924,10 @@ end
 function Kochess:launchNextMove()
     self.timer:switchPlayer()
     self:updateTimerDisplay()
+    if self:isFoxHoundMode() then
+        if not self.game.is_human(self.game.turn()) then self:launchFoxHoundAI() end
+        return
+    end
     if self:isCheckersMode() then
         if not self.game.is_human(self.game.turn()) then self:launchCheckersAI() end
         return
@@ -872,6 +950,15 @@ function Kochess:launchNextMove()
 end
 
 function Kochess:launchCurrentComputerMove()
+    if self:isFoxHoundMode() then
+        if self.game.setup_pending or self.game.is_human(self.game.turn()) then return end
+        self.running = true
+        self.timer.currentPlayer = self.game.turn()
+        self.timer:start()
+        self:updateTimerDisplay()
+        self:launchFoxHoundAI()
+        return
+    end
     if self:isCheckersMode() then
         if self.game.is_human(self.game.turn()) then return end
         self.running = true
@@ -900,6 +987,21 @@ function Kochess:launchCheckersAI()
         if depth == 0 then depth = 6 end
         depth = math.max(1, math.min(6, depth))
         local move = CheckersAI.bestMove(self.game, depth, self.blunder_chance or 0)
+        if move then
+            local played = self.game:move{ from = move.from, to = move.to }
+            if played then self.board:handleGameMove(played) end
+        end
+    end)
+end
+
+function Kochess:launchFoxHoundAI()
+    if self.foxhound_busy or self.game.setup_pending or self.game.is_human(self.game.turn()) then return end
+    self.foxhound_busy = true
+    UIManager:scheduleIn(0.2, function()
+        self.foxhound_busy = false
+        if not self:isFoxHoundMode() or self.game.setup_pending or self.game.is_human(self.game.turn()) then return end
+        local depth = tonumber(self.engine_depth) or 4
+        local move = FoxHoundAI.bestMove(self.game, depth, self.blunder_chance or 0)
         if move then
             local played = self.game:move{ from = move.from, to = move.to }
             if played then self.board:handleGameMove(played) end
@@ -951,6 +1053,7 @@ function Kochess:stopUCI()
     self._pending_launch = nil
     self.engine_busy = false
     self.checkers_busy = false
+    self.foxhound_busy = false
     if self.engine and not self.engine.closed and self.engine.state.uciok then self.engine.send("stop") end
 end
 
@@ -988,8 +1091,14 @@ function Kochess:updateTimerDisplay()
 end
 
 function Kochess:updatePlayerDisplay(ind)
-    local white = "White(" .. (self.game.is_human(Chess.WHITE) and "Human" or "Computer") .. ")"
-    local black = "(" .. (self.game.is_human(Chess.BLACK) and "Human" or "Computer") .. ")Black"
+    if self:isFoxHoundMode() and self.game.setup_pending then
+        self.status_bar:setSubTitle("Choose Fox Start")
+        return
+    end
+    local white_label = self:isFoxHoundMode() and "Fox" or "White"
+    local black_label = self:isFoxHoundMode() and "Hounds" or "Black"
+    local white = white_label .. "(" .. (self.game.is_human(Chess.WHITE) and "Human" or "Computer") .. ")"
+    local black = "(" .. (self.game.is_human(Chess.BLACK) and "Human" or "Computer") .. ")" .. black_label
     local sep = ind or (self.running and ((self.game.turn()==Chess.WHITE and " < ") or " > ") or " || ")
     self.status_bar:setSubTitle(white .. sep .. black)
 end
@@ -1000,7 +1109,9 @@ function Kochess:resetGame()
     self.board:clearValidMoves()
     self.board:clearPreviousMoveHints()
     self.board:clearCheckHint()
-    if self:isCheckersMode() then
+    if self:isFoxHoundMode() then
+        self:setSetting("saved_foxhound_state", "")
+    elseif self:isCheckersMode() then
         self:setSetting("saved_checkers_state", "")
     else
         self:setSetting("saved_pgn", "")
@@ -1013,8 +1124,13 @@ end
 function Kochess:showGameOverDialog(result, reason)
     local text
     if result == "1-0" or result == "0-1" then
-        local winner = (result == "1-0") and _("White") or _("Black")
-        if self:isCheckersMode() then
+        local winner
+        if self:isFoxHoundMode() then
+            winner = (result == "1-0") and _("Fox") or _("Hounds")
+        else
+            winner = (result == "1-0") and _("White") or _("Black")
+        end
+        if self:isCheckersMode() or self:isFoxHoundMode() then
             text = string.format(_("%s Wins!"), winner)
         else
             text = string.format(_("Checkmate! %s wins."), winner)
@@ -1084,6 +1200,7 @@ function Kochess:createStatusBar()
                     self:stopUCI()
                     local mode = self:getSetting("game_mode", MODE_CHESS)
                     if mode ~= self.game_mode then
+                        self:clearSavedGameStates()
                         self.game_mode = mode
                         self:shutdownEngine()
                         UIManager:nextTick(function() self:startGame() end)

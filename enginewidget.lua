@@ -102,6 +102,7 @@ end
 
 function EngineWidget:isGoldfishActive()
     local chess_mode = not (self.parent and self.parent.isCheckersMode and self.parent:isCheckersMode())
+        and not (self.parent and self.parent.isFoxHoundMode and self.parent:isFoxHoundMode())
     return chess_mode
         and (self.changes.force_goldfish or (self.parent and self.parent.goldfish_active))
 end
