@@ -1,11 +1,11 @@
 # Casual Chess & Checkers for KOReader E-Ink Devices
-Casual Chess & Checkers plugin for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
+Casual Chess, Checkers and Fox & Hounds plugin for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
 It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 ---
 
 ## Download
-https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.6.0/casualkochess.koplugin.v1.6.0.zip
+https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.7.0/casualkochess.koplugin.v1.7.0.zip
 
 ---
 
@@ -19,7 +19,7 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.6.0/casu
 - Adjustable computer search depth (1-ThinkTime).
 - Adjustable blunder chance (0%-60%), Creates the possibilty for Stockfish to makes mistakes, plays more like a casual human.
 - Custom Goldfish AI for chess as a fall-back when Stockfish engine fails to load. - It's not very smart, but still playable.
-- Switch between Chess & Checkers.
+- Switch between Chess, Checkers and Fox & Hounds
 - Setting to invert pieces at "top of screen" end of board for a more natural Human Vs Human game.
 - Learning hints, shows valid moves for selected piece.
 - Checkmate, Draw, Stalemate & 50-Move Rule detection.
