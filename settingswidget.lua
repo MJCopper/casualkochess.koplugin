@@ -154,7 +154,7 @@ function SettingsWidget:buildGameModeGroup()
         radio_buttons = {
             {{ text = _("Chess"), checked = self.changes.game_mode ~= MODE_CHECKERS and self.changes.game_mode ~= MODE_FOXHOUND, mode = MODE_CHESS }},
             {{ text = _("Checkers"), checked = self.changes.game_mode == MODE_CHECKERS, mode = MODE_CHECKERS }},
-            {{ text = _("Fox and Hounds"), checked = self.changes.game_mode == MODE_FOXHOUND, mode = MODE_FOXHOUND }},
+            {{ text = _("Fox & Hounds"), checked = self.changes.game_mode == MODE_FOXHOUND, mode = MODE_FOXHOUND }},
         },
         button_select_callback = onSelect,
         parent = self.dialog,
