@@ -1,5 +1,5 @@
-# Casual Chess & Checkers for KOReader E-Ink Devices
-Casual Chess, Checkers and Fox & Hounds plugin for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
+# Board game collection for KOReader E-Ink Devices
+Casual Chess, Checkers, Reversi (Othello) and Fox & Hounds games for KOReader, designed for Kobo and other ARM e-ink devices (Kindle, PocketBook, Cervantes, Remarkable).
 It has been derived from the work by Baptiste Fouques & Victor Fariña
 
 ---
@@ -40,7 +40,9 @@ https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.7.0/casu
    - Kobo and other ARM e-ink readers: a compatible `stockfish` ARM binary is included, this step can be skipped.
    - If no valid engine is available Casual Chess will fall back to basic Goldfish engine.
 
-3. Restart KOReader. The plugin appears in the main menu as **Casual Chess**.
+3. Restart KOReader. The plugin appears in the *Tools* menu as **Casual Chess**.
+
+4. Choose the desired game in the settings menu.
 
 ---
 
@@ -62,4 +64,5 @@ See `LICENSE` for full terms.
 Based on Kochess © Victor Fariña https://github.com/coffman/kochess.koplugin  
 Based on the original kochess by Baptiste Fouques https://github.com/bateast/kochess  
 Chess logic provided by: https://github.com/arizati/chess.lua  
+Reversi game by kbarni https://github.com/kbarni
 Icons derived from: Colin M. L. Burnett (GPLv2+)
