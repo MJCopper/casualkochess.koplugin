@@ -262,7 +262,7 @@ end
 function SettingsWidget:buildDifficultyGroup()
     local w = self.dialog.element_width
 
-    self.difficultyPresets = {
+    local defaultPresets = {
         {
             name          = _("Newcomer"),
             skill_level   = 0,
@@ -348,6 +348,96 @@ function SettingsWidget:buildDifficultyGroup()
             blunder_chance  = 0.0,
         },
     }
+
+    -- Reversi has a higher branching factor, so depth increases more slowly.
+    local reversiPresets = {
+        {
+            name          = _("Newcomer"),
+            skill_level   = 0,
+            engine_depth  = 1,
+            engine_movetime = 1,
+            blunder_chance  = 0.50,
+        },
+        {
+            name          = _("Beginner"),
+            skill_level   = 0,
+            engine_depth  = 1,
+            engine_movetime = 1,
+            blunder_chance  = 0.35,
+        },
+        {
+            name          = _("Learner"),
+            skill_level   = 0,
+            engine_depth  = 1,
+            engine_movetime = 1,
+            blunder_chance  = 0.25,
+        },
+        {
+            name          = _("Casual"),
+            skill_level   = 0,
+            engine_depth  = 1,
+            engine_movetime = 1,
+            blunder_chance  = 0.15,
+        },
+        {
+            name          = _("Developing"),
+            skill_level   = 0,
+            engine_depth  = 2,
+            engine_movetime = 1,
+            blunder_chance  = 0.20,
+        },
+        {
+            name          = _("Intermediate"),
+            skill_level   = 0,
+            engine_depth  = 2,
+            engine_movetime = 1,
+            blunder_chance  = 0.10,
+        },
+        {
+            name          = _("Skilled"),
+            skill_level   = 0,
+            engine_depth  = 2,
+            engine_movetime = 1,
+            blunder_chance  = 0.05,
+        },
+        {
+            name          = _("Strong"),
+            skill_level   = 0,
+            engine_depth  = 3,
+            engine_movetime = 1,
+            blunder_chance  = 0.10,
+        },
+        {
+            name          = _("Expert"),
+            skill_level   = 0,
+            engine_depth  = 3,
+            engine_movetime = 1,
+            blunder_chance  = 0.0,
+        },
+        {
+            name          = _("Advanced"),
+            skill_level   = 0,
+            engine_depth  = 4,
+            engine_movetime = 1,
+            blunder_chance  = 0.05,
+        },
+        {
+            name          = _("Club Player"),
+            skill_level   = 0,
+            engine_depth  = 4,
+            engine_movetime = 1,
+            blunder_chance  = 0.0,
+        },
+        {
+            name          = _("Master"),
+            skill_level   = 0,
+            engine_depth  = 5,
+            engine_movetime = 1,
+            blunder_chance  = 0.0,
+        },
+    }
+
+    self.difficultyPresets = self:isReversiMode() and reversiPresets or defaultPresets
     local PRESETS = self.difficultyPresets
 
     self.difficultyLabelWidget = TextWidget:new{
