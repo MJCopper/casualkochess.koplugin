@@ -35,6 +35,7 @@ function InterfaceWidget:new(opts)
             opponent_hints = init.opponent_hints == true,
             check_hints = init.check_hints == true,
             rotate_top_pieces = init.rotate_top_pieces == true,
+            thinking_indicator = init.thinking_indicator ~= false,
         },
     }, InterfaceWidget)
 end
@@ -100,6 +101,8 @@ function InterfaceWidget:buildOptions()
         self:makeToggle("check_hints", _("Check Hints")),
         VerticalSpan:new{ width = Size.padding.small },
         self:makeToggle("rotate_top_pieces", _("Invert Opponent Pieces")),
+        VerticalSpan:new{ width = Size.padding.small },
+        self:makeToggle("thinking_indicator", _("Thinking Indicator")),
     }
 end
 
@@ -194,6 +197,7 @@ function InterfaceWidget:resetToDefaults()
     self.changes.opponent_hints = false
     self.changes.check_hints = false
     self.changes.rotate_top_pieces = false
+    self.changes.thinking_indicator = true
     self:saveAndClose()
 end
 

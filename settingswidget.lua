@@ -29,6 +29,7 @@ local BACKGROUND_COLOR = Blitbuffer.COLOR_WHITE
 local MODE_CHESS = "chess"
 local MODE_CHECKERS = "checkers"
 local MODE_FOXHOUND = "foxhound"
+local MODE_REVERSI = "reversi"
 
 local SettingsWidget = {}
 SettingsWidget.__index = SettingsWidget
@@ -100,6 +101,7 @@ function SettingsWidget:initializeState()
         opponent_hints = (self.parent and self.parent.board and self.parent.board.opponent_hints == true) or false,
         check_hints = (self.parent and self.parent.board and self.parent.board.check_hints == true) or false,
         rotate_top_pieces = (self.parent and self.parent.board and self.parent.board.rotate_top_pieces == true) or false,
+        thinking_indicator = not (self.parent and self.parent.getSetting and self.parent:getSetting("thinking_indicator", true) == false),
         time_control = {
             [Chess.WHITE] = {
                 base_minutes  = self.timer.base[Chess.WHITE] / 60,
@@ -143,6 +145,10 @@ function SettingsWidget:isFoxHoundMode()
     return self.changes.game_mode == MODE_FOXHOUND
 end
 
+function SettingsWidget:isReversiMode()
+    return self.changes.game_mode == MODE_REVERSI
+end
+
 function SettingsWidget:buildGameModeGroup()
     local w = self.dialog.element_width
     local function onSelect(entry)
@@ -152,9 +158,14 @@ function SettingsWidget:buildGameModeGroup()
     self.gameModeGroup = RadioButtonTable:new{
         width = w,
         radio_buttons = {
-            {{ text = _("Chess"), checked = self.changes.game_mode ~= MODE_CHECKERS and self.changes.game_mode ~= MODE_FOXHOUND, mode = MODE_CHESS }},
-            {{ text = _("Checkers"), checked = self.changes.game_mode == MODE_CHECKERS, mode = MODE_CHECKERS }},
-            {{ text = _("Fox & Hounds"), checked = self.changes.game_mode == MODE_FOXHOUND, mode = MODE_FOXHOUND }},
+            {
+                { text = _("Chess"), checked = self.changes.game_mode ~= MODE_CHECKERS and self.changes.game_mode ~= MODE_FOXHOUND and self.changes.game_mode ~= MODE_REVERSI, mode = MODE_CHESS },
+                { text = _("Checkers"), checked = self.changes.game_mode == MODE_CHECKERS, mode = MODE_CHECKERS },
+            },
+            {
+                { text = _("Fox & Hounds"), checked = self.changes.game_mode == MODE_FOXHOUND, mode = MODE_FOXHOUND },
+                { text = _("Reversi"), checked = self.changes.game_mode == MODE_REVERSI, mode = MODE_REVERSI },
+            },
         },
         button_select_callback = onSelect,
         parent = self.dialog,
@@ -399,7 +410,7 @@ function SettingsWidget:getCurrentDifficultyPosition()
 end
 
 function SettingsWidget:getDifficultyLabel()
-    if not self:isCheckersMode() and not self:isFoxHoundMode() and (self.changes.force_goldfish or (self.parent and self.parent.goldfish_active)) then
+    if not self:isCheckersMode() and not self:isFoxHoundMode() and not self:isReversiMode() and (self.changes.force_goldfish or (self.parent and self.parent.goldfish_active)) then
         return "Goldfish ELO: ~600"
     end
     local pos = self:getCurrentDifficultyPosition()
@@ -437,7 +448,7 @@ function SettingsWidget:buildEngineButton()
         radius  = Size.radius.button,
         padding = Size.padding.small,
         callback = function()
-            if not self:isCheckersMode() and not self:isFoxHoundMode() and not (self.engine and self.engine.state and self.engine.state.uciok) then
+            if not self:isCheckersMode() and not self:isFoxHoundMode() and not self:isReversiMode() and not (self.engine and self.engine.state and self.engine.state.uciok) then
                 local text = _("Stockfish engine is not ready.")
                 if self.parent and self.parent.getEngineStatusText then
                     text = self.parent:getEngineStatusText()
@@ -493,6 +504,7 @@ function SettingsWidget:buildInterfaceButton()
                     opponent_hints = self.changes.opponent_hints,
                     check_hints = self.changes.check_hints,
                     rotate_top_pieces = self.changes.rotate_top_pieces,
+                    thinking_indicator = self.changes.thinking_indicator,
                 },
                 onSave = function(saved)
                     self.changes.show_selected = saved.show_selected
@@ -501,6 +513,7 @@ function SettingsWidget:buildInterfaceButton()
                     self.changes.opponent_hints = saved.opponent_hints
                     self.changes.check_hints = saved.check_hints
                     self.changes.rotate_top_pieces = saved.rotate_top_pieces
+                    self.changes.thinking_indicator = saved.thinking_indicator
                     self:applyInterfaceChanges(saved)
                     self:markDirty()
                     UIManager:setDirty(self.parent, "ui")
@@ -541,6 +554,7 @@ function SettingsWidget:applyInterfaceChanges(s)
         p:setSetting("opponent_hints", s.opponent_hints and true or false)
         p:setSetting("check_hints", s.check_hints and true or false)
         p:setSetting("rotate_top_pieces", s.rotate_top_pieces and true or false)
+        p:setSetting("thinking_indicator", s.thinking_indicator ~= false)
     end
 end
 
@@ -566,7 +580,7 @@ function SettingsWidget:applyEngineChanges(s)
         p:setSetting("engine_movetime", self.parent.engine_movetime)
         p:setSetting("blunder_chance",  self.parent.blunder_chance)
         p:setSetting("force_goldfish",  force_goldfish)
-        if force_goldfish then
+        if force_goldfish and p.isChessMode and p:isChessMode() then
             p.engine_status_text = "Goldfish forced for testing."
             if p.startGoldfishFallback then p:startGoldfishFallback() end
         elseif p.goldfish_active and p.isChessMode and p:isChessMode() then
@@ -673,6 +687,7 @@ function SettingsWidget:resetToDefaults()
     self.changes.opponent_hints = false
     self.changes.check_hints = false
     self.changes.rotate_top_pieces = false
+    self.changes.thinking_indicator = true
     self.changes.human_choice    = { [Chess.WHITE] = true, [Chess.BLACK] = false }
     self.changes.time_control    = {
         [Chess.WHITE] = { base_minutes = 15, incr_seconds = 10 },
@@ -717,6 +732,7 @@ function SettingsWidget:applyAndClose()
         p:setSetting("opponent_hints", s.opponent_hints and true or false)
         p:setSetting("check_hints", s.check_hints and true or false)
         p:setSetting("rotate_top_pieces", s.rotate_top_pieces and true or false)
+        p:setSetting("thinking_indicator", s.thinking_indicator ~= false)
         local wc = s.time_control[Chess.WHITE]
         local bc = s.time_control[Chess.BLACK]
         p:setSetting("time_base_white", wc.base_minutes * 60)

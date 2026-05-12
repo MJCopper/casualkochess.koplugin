@@ -40,6 +40,9 @@ local CheckersAI = require("checkersai")
 local FoxHoundGame = require("foxhoundgame")
 local FoxHoundBoard = require("foxhoundboard")
 local FoxHoundAI = require("foxhoundai")
+local ReversiGame = require("reversigame")
+local ReversiBoard = require("reversiboard")
+local ReversiAI = require("reversiai")
 local Timer = require("timer")
 local Uci = require("uci")
 local GoldfishUCI = require("goldfishuci")
@@ -104,6 +107,7 @@ local TOOLBAR_PADDING = 4
 local MODE_CHESS = "chess"
 local MODE_CHECKERS = "checkers"
 local MODE_FOXHOUND = "foxhound"
+local MODE_REVERSI = "reversi"
 
 local Kochess = FrameContainer:extend{
     name = "casualkochess",
@@ -270,7 +274,7 @@ function Kochess:startGame()
 end
 
 function Kochess:isChessMode()
-    return self.game_mode ~= MODE_CHECKERS and self.game_mode ~= MODE_FOXHOUND
+    return self.game_mode ~= MODE_CHECKERS and self.game_mode ~= MODE_FOXHOUND and self.game_mode ~= MODE_REVERSI
 end
 
 function Kochess:isCheckersMode()
@@ -281,7 +285,15 @@ function Kochess:isFoxHoundMode()
     return self.game_mode == MODE_FOXHOUND
 end
 
+function Kochess:isReversiMode()
+    return self.game_mode == MODE_REVERSI
+end
+
 function Kochess:saveGameState()
+    if self:isReversiMode() then
+        self:saveReversiGameState()
+        return
+    end
     if self:isFoxHoundMode() then
         self:saveFoxHoundGameState()
         return
@@ -304,9 +316,15 @@ function Kochess:clearSavedGameStates()
     self:setSetting("saved_checkers_running", false)
     self:setSetting("saved_foxhound_state", "")
     self:setSetting("saved_foxhound_running", false)
+    self:setSetting("saved_reversi_state", "")
+    self:setSetting("saved_reversi_running", false)
 end
 
 function Kochess:restoreGameState()
+    if self:isReversiMode() then
+        self:restoreReversiGameState()
+        return
+    end
     if self:isFoxHoundMode() then
         self:restoreFoxHoundGameState()
         return
@@ -410,6 +428,37 @@ function Kochess:restoreFoxHoundGameState()
     self:updatePlayerDisplay()
 end
 
+function Kochess:saveReversiGameState()
+    if not (self.game and self.game.export_state) then return end
+    self:setSetting("saved_reversi_state", self.game:export_state())
+    self:setSetting("saved_reversi_time_white", self.timer:getRemainingTime(Chess.WHITE))
+    self:setSetting("saved_reversi_time_black", self.timer:getRemainingTime(Chess.BLACK))
+    self:setSetting("saved_reversi_running", self.running)
+end
+
+function Kochess:restoreReversiGameState()
+    local state = self:getSetting("saved_reversi_state", nil)
+    if type(state) ~= "table" then return end
+
+    local ok = self.game.load_state and self.game:load_state(state)
+    if not ok then
+        self:setSetting("saved_reversi_state", "")
+        return
+    end
+
+    local tw = self:getSetting("saved_reversi_time_white", nil)
+    local tb = self:getSetting("saved_reversi_time_black", nil)
+    if tw then self.timer.time[Chess.WHITE] = tw end
+    if tb then self.timer.time[Chess.BLACK] = tb end
+
+    self.timer.currentPlayer = self.game.turn()
+    self.running = self:getSetting("saved_reversi_running", false)
+
+    self:updatePgnLog()
+    self:updateTimerDisplay()
+    self:updatePlayerDisplay()
+end
+
 function Kochess:loadOpenings()
     if not self:isChessMode() then return end
     if self.openings then return end
@@ -473,6 +522,7 @@ function Kochess:startGoldfishFallback()
 
     self.engine:on("bestmove", function(move_uci)
         self.engine_busy = false
+        self:stopThinkingIndicator()
         if not self.game.is_human(self.game.turn()) then
             self:uciMove(move_uci)
         end
@@ -615,6 +665,7 @@ function Kochess:initializeEngine()
 
     self.engine:on("bestmove", function(move_uci)
         self.engine_busy = false
+        self:stopThinkingIndicator()
 
         if not self.game.is_human(self.game.turn()) then
             self:uciMove(move_uci)
@@ -647,7 +698,9 @@ function Kochess:initializeEngine()
 end
 
 function Kochess:initializeGameLogic()
-    if self:isFoxHoundMode() then
+    if self:isReversiMode() then
+        self.game = ReversiGame:new()
+    elseif self:isFoxHoundMode() then
         self.game = FoxHoundGame:new()
     elseif self:isCheckersMode() then
         self.game = CheckersGame:new()
@@ -677,7 +730,8 @@ function Kochess:initializeGameLogic()
 end
 
 function Kochess:initializeBoard(board_h)
-    local BoardClass = self:isFoxHoundMode() and FoxHoundBoard
+    local BoardClass = self:isReversiMode() and ReversiBoard
+        or (self:isFoxHoundMode() and FoxHoundBoard)
         or (self:isCheckersMode() and CheckersBoard or ChessBoard)
     self.board = BoardClass:new{
         game          = self.game,
@@ -835,7 +889,7 @@ function Kochess:detectOpening()
 end
 
 local function formatEval(self)
-    if self:isCheckersMode() or self:isFoxHoundMode() then return "" end
+    if self:isCheckersMode() or self:isFoxHoundMode() or self:isReversiMode() then return "" end
     local mate = self.last_mate
     if mate ~= nil then
         local m = tonumber(mate) or 0
@@ -880,12 +934,47 @@ function Kochess:updateEvalLine()
     end
 end
 
+function Kochess:startThinkingIndicator()
+    self:stopThinkingIndicator()
+    if self:getSetting("thinking_indicator", true) == false then return end
+    if not self.status_bar then return end
+    local token = {}
+    self._thinking_token = token
+    self._thinking_started_at = os.time()
+    UIManager:scheduleIn(3, function()
+        if self._thinking_token == token then self:showThinkingIndicator() end
+    end)
+end
+
+function Kochess:showThinkingIndicator()
+    if self._thinking_visible or not self.status_bar then return end
+    self._thinking_visible = true
+    self.status_bar:setSubTitle(_("Computer thinking..."))
+    if self.eval_line then
+        self.eval_line:setText(_("Computer thinking..."))
+    end
+    UIManager:setDirty(self.status_bar, "ui")
+    UIManager:setDirty(self, "ui")
+end
+
+function Kochess:stopThinkingIndicator()
+    local was_visible = self._thinking_visible
+    self._thinking_token = nil
+    self._thinking_started_at = nil
+    self._thinking_visible = false
+    if was_visible and self.status_bar and self.game then
+        self:updatePlayerDisplay()
+        self:updateEvalLine()
+    end
+end
+
 function Kochess:createPgnLogWidget(txt, w, h) return TextBoxWidget:new{ use_xtext=true, text=txt, face=Font:getFace(self.notation_font, self.notation_size), scroll=true, width=w, height=h, dialog=self } end
 function Kochess:createToolbarButton(icon, w, h, cb) return ButtonWidget:new{ icon=icon, width=w, icon_width=w, icon_height=h, padding=0, margin=0, bordersize=0, callback=cb } end
 function Kochess:handleUndoMove(all) self:stopUCI(); self.timer:stop(); if all then while self.game.undo() do end else self.game.undo() end; self.board:updateBoard(); self:updatePgnLog(); UIManager:setDirty(self, "ui"); self.timer:start() end
 function Kochess:handleRedoMove(all) self:stopUCI(); self.timer:stop(); if all then while self.game.redo() do end else self.game.redo() end; self.board:updateBoard(); self:updatePgnLog(); UIManager:setDirty(self, "ui"); self.timer:start() end
 
 function Kochess:onMoveExecuted(move)
+    self:stopThinkingIndicator()
     if self:isFoxHoundMode() and not move then
         self:updatePgnLog()
         self:updateTimerDisplay()
@@ -923,7 +1012,12 @@ end
 
 function Kochess:launchNextMove()
     self.timer:switchPlayer()
+    self.timer.currentPlayer = self.game.turn()
     self:updateTimerDisplay()
+    if self:isReversiMode() then
+        if not self.game.is_human(self.game.turn()) then self:launchReversiAI() end
+        return
+    end
     if self:isFoxHoundMode() then
         if not self.game.is_human(self.game.turn()) then self:launchFoxHoundAI() end
         return
@@ -950,6 +1044,15 @@ function Kochess:launchNextMove()
 end
 
 function Kochess:launchCurrentComputerMove()
+    if self:isReversiMode() then
+        if self.game.is_human(self.game.turn()) then return end
+        self.running = true
+        self.timer.currentPlayer = self.game.turn()
+        self.timer:start()
+        self:updateTimerDisplay()
+        self:launchReversiAI()
+        return
+    end
     if self:isFoxHoundMode() then
         if self.game.setup_pending or self.game.is_human(self.game.turn()) then return end
         self.running = true
@@ -979,34 +1082,110 @@ end
 
 function Kochess:launchCheckersAI()
     if self.checkers_busy or self.game.is_human(self.game.turn()) then return end
-    self.checkers_busy = true
-    UIManager:scheduleIn(0.2, function()
-        self.checkers_busy = false
-        if not self:isCheckersMode() or self.game.is_human(self.game.turn()) then return end
-        local depth = tonumber(self.engine_depth) or 4
-        if depth == 0 then depth = 6 end
-        depth = math.max(1, math.min(6, depth))
-        local move = CheckersAI.bestMove(self.game, depth, self.blunder_chance or 0)
-        if move then
+    self:runCooperativeAI(
+        "checkers_busy",
+        function() return self:isCheckersMode() and not self.game.is_human(self.game.turn()) end,
+        function(yield_fn)
+            local depth = tonumber(self.engine_depth) or 4
+            if depth == 0 then depth = 6 end
+            depth = math.max(1, math.min(6, depth))
+            return CheckersAI.bestMove(self.game, depth, self.blunder_chance or 0, yield_fn)
+        end,
+        function(move)
+            if not move then return end
             local played = self.game:move{ from = move.from, to = move.to }
             if played then self.board:handleGameMove(played) end
         end
-    end)
+    )
+end
+
+function Kochess:runCooperativeAI(busy_key, guard, compute, apply)
+    if self[busy_key] then return end
+    self[busy_key] = true
+    self:startThinkingIndicator()
+
+    local checkpoint_limit = 20
+    local initial_delay = 0.15
+    local resume_delay = 0.02
+    local token = {}
+    self._ai_token = token
+    local co
+    local checks = 0
+    local function yield_fn()
+        checks = checks + 1
+        if checks >= checkpoint_limit then
+            checks = 0
+            coroutine.yield()
+        end
+    end
+
+    local function finish()
+        if self._ai_token == token then self._ai_token = nil end
+        self[busy_key] = false
+        self:stopThinkingIndicator()
+    end
+
+    local function step()
+        if self._ai_token ~= token or not guard() then
+            finish()
+            return
+        end
+        if self._thinking_started_at and os.time() - self._thinking_started_at >= 3 then
+            self:showThinkingIndicator()
+        end
+        if not co then
+            co = coroutine.create(function()
+                return compute(yield_fn)
+            end)
+        end
+        local ok, move = coroutine.resume(co)
+        if not ok then
+            finish()
+            return
+        end
+        if coroutine.status(co) == "dead" then
+            finish()
+            if guard() then apply(move) end
+            return
+        end
+        UIManager:scheduleIn(resume_delay, step)
+    end
+
+    UIManager:scheduleIn(initial_delay, step)
 end
 
 function Kochess:launchFoxHoundAI()
     if self.foxhound_busy or self.game.setup_pending or self.game.is_human(self.game.turn()) then return end
-    self.foxhound_busy = true
-    UIManager:scheduleIn(0.2, function()
-        self.foxhound_busy = false
-        if not self:isFoxHoundMode() or self.game.setup_pending or self.game.is_human(self.game.turn()) then return end
-        local depth = tonumber(self.engine_depth) or 4
-        local move = FoxHoundAI.bestMove(self.game, depth, self.blunder_chance or 0)
-        if move then
+    self:runCooperativeAI(
+        "foxhound_busy",
+        function() return self:isFoxHoundMode() and not self.game.setup_pending and not self.game.is_human(self.game.turn()) end,
+        function(yield_fn)
+            local depth = tonumber(self.engine_depth) or 4
+            return FoxHoundAI.bestMove(self.game, depth, self.blunder_chance or 0, yield_fn)
+        end,
+        function(move)
+            if not move then return end
             local played = self.game:move{ from = move.from, to = move.to }
             if played then self.board:handleGameMove(played) end
         end
-    end)
+    )
+end
+
+function Kochess:launchReversiAI()
+    if self.reversi_busy or self.game.is_human(self.game.turn()) then return end
+    self:runCooperativeAI(
+        "reversi_busy",
+        function() return self:isReversiMode() and not self.game.is_human(self.game.turn()) end,
+        function(yield_fn)
+            local depth = tonumber(self.engine_depth) or 4
+            return ReversiAI.bestMove(self.game, depth, self.blunder_chance or 0, yield_fn)
+        end,
+        function(move)
+            if not move then return end
+            local played = self.game:move{ to = move.to }
+            if played then self.board:handleGameMove(played) end
+        end
+    )
 end
 
 function Kochess:uciMove(str)
@@ -1023,6 +1202,7 @@ function Kochess:launchUCI()
     if not (self.engine and self.engine.state and self.engine.state.uciok) then return end
     if self.engine_busy then return end
     self.engine_busy = true
+    self:startThinkingIndicator()
 
     local moves = {}
     for _, m in ipairs(self.game.history({ verbose = true })) do
@@ -1051,15 +1231,23 @@ end
 
 function Kochess:stopUCI()
     self._pending_launch = nil
+    self._ai_token = nil
+    self:stopThinkingIndicator()
     self.engine_busy = false
     self.checkers_busy = false
     self.foxhound_busy = false
+    self.reversi_busy = false
     if self.engine and not self.engine.closed and self.engine.state.uciok then self.engine.send("stop") end
 end
 
 function Kochess:shutdownEngine()
     self._pending_launch = nil
+    self._ai_token = nil
+    self:stopThinkingIndicator()
     self.engine_busy = false
+    self.checkers_busy = false
+    self.foxhound_busy = false
+    self.reversi_busy = false
     self.goldfish_active = false
     if self.engine and not self.engine.closed then
         self.engine:quit()
@@ -1091,6 +1279,7 @@ function Kochess:updateTimerDisplay()
 end
 
 function Kochess:updatePlayerDisplay(ind)
+    if self._thinking_visible then return end
     if self:isFoxHoundMode() and self.game.setup_pending then
         self.status_bar:setSubTitle("Choose Fox Start")
         return
@@ -1111,6 +1300,8 @@ function Kochess:resetGame()
     self.board:clearCheckHint()
     if self:isFoxHoundMode() then
         self:setSetting("saved_foxhound_state", "")
+    elseif self:isReversiMode() then
+        self:setSetting("saved_reversi_state", "")
     elseif self:isCheckersMode() then
         self:setSetting("saved_checkers_state", "")
     else
@@ -1122,6 +1313,7 @@ function Kochess:resetGame()
 end
 
 function Kochess:showGameOverDialog(result, reason)
+    self:stopThinkingIndicator()
     local text
     if result == "1-0" or result == "0-1" then
         local winner
@@ -1130,7 +1322,7 @@ function Kochess:showGameOverDialog(result, reason)
         else
             winner = (result == "1-0") and _("White") or _("Black")
         end
-        if self:isCheckersMode() or self:isFoxHoundMode() then
+        if self:isCheckersMode() or self:isFoxHoundMode() or self:isReversiMode() then
             text = string.format(_("%s Wins!"), winner)
         else
             text = string.format(_("Checkmate! %s wins."), winner)
@@ -1191,6 +1383,7 @@ function Kochess:createStatusBar()
         title_top_padding      = Screen:scaleBySize(2),
         bottom_v_padding       = Screen:scaleBySize(8),
         left_icon_tap_callback = function()
+            self:stopThinkingIndicator()
             SettingsWidget:new{
                 engine  = self.engine,
                 timer   = self.timer,
@@ -1219,6 +1412,7 @@ function Kochess:createStatusBar()
                 text        = _("Exit Chess?"),
                 ok_text     = _("Exit"),
                 ok_callback = function()
+                    self:stopThinkingIndicator()
                     self.timer:stop()
                     self:saveGameState()
                     UIManager:close(self, "full")

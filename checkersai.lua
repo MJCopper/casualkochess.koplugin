@@ -2,10 +2,16 @@ local Checkers = require("checkersgame")
 
 local AI = {}
 
-local function evaluate(game, color)
+local function checkpoint(fn)
+    if fn then fn() end
+end
+
+local function evaluate(game, color, yield_fn)
+    checkpoint(yield_fn)
     local score = 0
     local mobility = 0
     for sq, piece in pairs(game.board_state) do
+        checkpoint(yield_fn)
         local value = piece.type == Checkers.KING and 175 or 100
         if piece.type == Checkers.MAN then
             local rank = tonumber(sq:sub(2, 2)) or 0
@@ -31,23 +37,25 @@ local function evaluate(game, color)
     return score + mobility
 end
 
-local function search(game, depth, alpha, beta, color)
+local function search(game, depth, alpha, beta, color, yield_fn)
+    checkpoint(yield_fn)
     local over, result = game:game_over()
     if over then
         local winner = result == "1-0" and Checkers.WHITE or Checkers.BLACK
         return winner == color and 100000 or -100000
     end
     if depth <= 0 then
-        return evaluate(game, color)
+        return evaluate(game, color, yield_fn)
     end
 
     local moves = game:moves({ verbose = true })
     if game:turn() == color then
         local best = -math.huge
         for _, move in ipairs(moves) do
+            checkpoint(yield_fn)
             local clone = game:clone()
             clone:move({ from = move.from, to = move.to })
-            local score = search(clone, depth - 1, alpha, beta, color)
+            local score = search(clone, depth - 1, alpha, beta, color, yield_fn)
             if score > best then best = score end
             if best > alpha then alpha = best end
             if alpha >= beta then break end
@@ -57,9 +65,10 @@ local function search(game, depth, alpha, beta, color)
 
     local best = math.huge
     for _, move in ipairs(moves) do
+        checkpoint(yield_fn)
         local clone = game:clone()
         clone:move({ from = move.from, to = move.to })
-        local score = search(clone, depth - 1, alpha, beta, color)
+        local score = search(clone, depth - 1, alpha, beta, color, yield_fn)
         if score < best then best = score end
         if best < beta then beta = best end
         if alpha >= beta then break end
@@ -67,7 +76,7 @@ local function search(game, depth, alpha, beta, color)
     return best
 end
 
-function AI.bestMove(game, depth, blunder_chance)
+function AI.bestMove(game, depth, blunder_chance, yield_fn)
     local moves = game:moves({ verbose = true })
     if #moves == 0 then return nil end
 
@@ -82,9 +91,10 @@ function AI.bestMove(game, depth, blunder_chance)
     local best_score = -math.huge
 
     for _, move in ipairs(moves) do
+        checkpoint(yield_fn)
         local clone = game:clone()
         clone:move({ from = move.from, to = move.to })
-        local score = search(clone, depth - 1, -math.huge, math.huge, color)
+        local score = search(clone, depth - 1, -math.huge, math.huge, color, yield_fn)
         if score > best_score then
             best_score = score
             best_move = move
