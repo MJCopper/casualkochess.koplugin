@@ -108,7 +108,7 @@ function AI.bestMove(game, depth, blunder_chance, yield_fn)
 
     depth = tonumber(depth) or 4
     if depth == 0 then depth = 6 end
-    depth = math.max(1, math.min(6, depth + 1))
+    depth = math.max(1, math.min(6, depth + 2))
 
     local best = {}
     local best_score = -math.huge

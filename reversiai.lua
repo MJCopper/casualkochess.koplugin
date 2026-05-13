@@ -2,6 +2,17 @@ local Reversi = require("reversigame")
 
 local AI = {}
 
+local STATIC_WEIGHTS = {
+    [1] = { 120, -20, 20, 5, 5, 20, -20, 120 },
+    [2] = { -20, -40, -5, -5, -5, -5, -40, -20 },
+    [3] = { 20, -5, 15, 3, 3, 15, -5, 20 },
+    [4] = { 5, -5, 3, 3, 3, 3, -5, 5 },
+    [5] = { 5, -5, 3, 3, 3, 3, -5, 5 },
+    [6] = { 20, -5, 15, 3, 3, 15, -5, 20 },
+    [7] = { -20, -40, -5, -5, -5, -5, -40, -20 },
+    [8] = { 120, -20, 20, 5, 5, 20, -20, 120 },
+}
+
 local CORNERS = { a1 = true, a8 = true, h1 = true, h8 = true }
 local DANGEROUS = {
     a2 = "a1", b1 = "a1", b2 = "a1",
@@ -37,6 +48,11 @@ local function coords(sq)
     local file = string.byte(sq:sub(1, 1)) - string.byte("a") + 1
     local rank = tonumber(sq:sub(2, 2))
     return file, rank
+end
+
+local function staticWeight(sq)
+    local file, rank = coords(sq)
+    return (STATIC_WEIGHTS[rank] and STATIC_WEIGHTS[rank][file]) or 0
 end
 
 local function pieceScore(game, color)
@@ -131,12 +147,13 @@ local function evaluate(game, color, yield_fn)
     for sq, piece in pairs(game.board_state) do
         checkpoint(yield_fn)
         local sign = piece.color == color and 1 or -1
+        score = score + sign * staticWeight(sq) * 3
         if CORNERS[sq] then
             score = score + sign * 700
         elseif DANGEROUS[sq] and not game.board_state[DANGEROUS[sq]] then
             score = score - sign * 220
         elseif sq:match("^[ah]") or sq:match("[18]$") then
-            score = score + sign * 28
+            score = score + sign * 18
         end
     end
 
@@ -146,13 +163,13 @@ end
 
 local function moveScore(game, move, color, yield_fn)
     checkpoint(yield_fn)
-    local score = #(move.flips or {}) * 3
+    local score = #(move.flips or {}) * 3 + staticWeight(move.to) * 4
     if CORNERS[move.to] then
         score = score + 900
     elseif DANGEROUS[move.to] and not game.board_state[DANGEROUS[move.to]] then
         score = score - 350
     elseif move.to:match("^[ah]") or move.to:match("[18]$") then
-        score = score + 80
+        score = score + 55
     end
 
     local clone = game:clone()
@@ -208,13 +225,20 @@ local function terminalScore(result, color, ply)
     return (winner == color and 100000 or -100000) - ply
 end
 
+local function branchLimit(depth)
+    if depth >= 6 then return 3 end
+    if depth >= 5 then return 4 end
+    if depth >= 4 then return 5 end
+    return 6
+end
+
 local function search(game, depth, alpha, beta, color, ply, yield_fn)
     checkpoint(yield_fn)
     local over, result = game:game_over()
     if over then return terminalScore(result, color, ply) end
     if depth <= 0 then return evaluate(game, color, yield_fn) end
 
-    local moves = orderedMoves(game, color, yield_fn, 6)
+    local moves = orderedMoves(game, color, yield_fn, branchLimit(depth))
     if #moves == 0 then
         local clone = game:clone()
         clone.self_turn = other(clone.self_turn)
@@ -253,19 +277,20 @@ function AI.bestMove(game, depth, blunder_chance, yield_fn)
     local moves = orderedMoves(game, color, yield_fn)
     if #moves == 0 then return nil end
 
-    blunder_chance = (tonumber(blunder_chance) or 0) / 2
+    blunder_chance = tonumber(blunder_chance) or 0
     if blunder_chance > 0 and math.random() < blunder_chance then
         return weakerMove(moves)
     end
 
     depth = tonumber(depth) or 4
-    if depth == 0 then depth = 4 end
-    depth = math.max(1, math.min(4, depth))
+    if depth == 0 then depth = 6 end
+    depth = math.max(1, math.min(6, depth))
 
     if depth <= 3 then
         return bestHeuristicMove(game, moves, color, yield_fn)
     end
 
+    moves = orderedMoves(game, color, yield_fn, branchLimit(depth))
     local best = {}
     local best_score = -math.huge
     for _, move in ipairs(moves) do

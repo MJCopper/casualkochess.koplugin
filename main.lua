@@ -257,6 +257,7 @@ function Kochess:startGame()
     end
 
     self.game_mode = self:getSetting("game_mode", MODE_CHESS)
+    self:loadEngineSettings()
     self:initializeGameLogic()
     if self:isChessMode() then
         self:initializeEngine()
@@ -531,40 +532,34 @@ function Kochess:startGoldfishFallback()
     self.engine:uci()
 end
 
-function Kochess:initializeEngine()
-    if not self:isChessMode() then return end
-
-    local CASUAL = {
+function Kochess:loadEngineSettings()
+    local defaults = {
         skill_level     = 0,
         engine_depth    = 2,
         engine_movetime = 1,
         blunder_chance  = 0.20,
     }
 
-    local missing = self.settings:readSetting("skill_level")    == nil
-                 or self.settings:readSetting("engine_depth")   == nil
-                 or self.settings:readSetting("engine_movetime") == nil
-                 or self.settings:readSetting("blunder_chance") == nil
-    if missing then
-        for k, v in pairs(CASUAL) do
-            self:setSetting(k, v)
+    for key, value in pairs(defaults) do
+        if self.settings:readSetting(key) == nil then
+            self:setSetting(key, value)
         end
     end
 
-    local defaultSkill   = self:getSetting("skill_level",     CASUAL.skill_level)
-    self.current_skill   = defaultSkill
-    if self.engine_movetime == nil then
-        self.engine_movetime = self:getSetting("engine_movetime", CASUAL.engine_movetime)
-    end
-    if self.engine_depth == nil then
-        self.engine_depth = self:getSetting("engine_depth", CASUAL.engine_depth)
-    end
-    if self.blunder_chance == nil then
-        self.blunder_chance = self:getSetting("blunder_chance", CASUAL.blunder_chance)
-    end
+    self.current_skill = self:getSetting("skill_level", defaults.skill_level)
+    local d = tonumber(self:getSetting("engine_depth", defaults.engine_depth)) or defaults.engine_depth
+    self.engine_depth = (d >= 1 and d <= 6) and d or 0
+    self.engine_movetime = math.max(1, math.min(10, tonumber(self:getSetting("engine_movetime", defaults.engine_movetime)) or defaults.engine_movetime))
+    self.blunder_chance = math.max(0, math.min(1, tonumber(self:getSetting("blunder_chance", defaults.blunder_chance)) or defaults.blunder_chance))
     if self.weakening then
         self.weakening:setChance(self.blunder_chance)
     end
+end
+
+function Kochess:initializeEngine()
+    if not self:isChessMode() then return end
+    self:loadEngineSettings()
+    local defaultSkill = self.current_skill or 0
     self.human_white = self:getSetting("human_white", true)
     self.human_black = self:getSetting("human_black", false)
     self.last_cp = nil
@@ -1217,7 +1212,7 @@ function Kochess:launchUCI()
     local btime = math.max(100, self.timer:getRemainingTime(Chess.BLACK) * 1000)
 
     local d = tonumber(self.engine_depth) or 0
-    local depth_limit = (d >= 1 and d <= 5) and d or nil
+    local depth_limit = (d >= 1 and d <= 6) and d or nil
 
     self.engine:go({
         wtime    = wtime,

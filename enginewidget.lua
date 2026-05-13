@@ -27,7 +27,7 @@ local function computeElo(skill, depth, movetime, blunder_chance)
     blunder_chance = math.max(0, math.min(1, tonumber(blunder_chance) or 0))
 
     local base = 1300 + (skill / 20) ^ 1.35 * 1500
-    local depth_penalty = ({ [1] = 700, [2] = 500, [3] = 300, [4] = 180, [5] = 90 })[depth] or 0
+    local depth_penalty = ({ [1] = 700, [2] = 500, [3] = 300, [4] = 180, [5] = 90, [6] = 50 })[depth] or 0
     local time_bonus = 0
     if depth == 0 then
         time_bonus = math.floor(math.log(movetime) / math.log(10) * 180)
@@ -166,13 +166,13 @@ end
 
 function EngineWidget:buildDepthGroup()
     local w = self.dialog.element_width
-    local min_d, max_d = 1, 6
-    local function depthToPos(d) return (d == 0) and 6 or d end
-    local function posToDepth(p) return (p == 6) and 0 or p end
+    local min_d, max_d = 1, 7
+    local function depthToPos(d) return (d == 0) and 7 or d end
+    local function posToDepth(p) return (p == 7) and 0 or p end
 
     self.depthProgress = ButtonProgressWidget:new{
         width       = w,
-        num_buttons = 6,
+        num_buttons = 7,
         position    = depthToPos(self.changes.engine_depth or 0),
         fine_tune   = true,
         callback    = function(pos)
