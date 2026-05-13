@@ -2,40 +2,136 @@ local Game = require("foxhoundgame")
 
 local AI = {}
 
+local FOX_DIRS = { { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } }
+local HOUND_DIRS = { { 1, -1 }, { -1, -1 } }
+
 local function checkpoint(fn)
     if fn then fn() end
+end
+
+local function other(color)
+    return color == Game.WHITE and Game.BLACK or Game.WHITE
+end
+
+local function coords(sq)
+    local file = string.byte(sq:sub(1, 1)) - string.byte("a") + 1
+    local rank = tonumber(sq:sub(2, 2))
+    return file, rank
+end
+
+local function square(file, rank)
+    if file < 1 or file > 8 or rank < 1 or rank > 8 then return nil end
+    return string.char(string.byte("a") + file - 1) .. tostring(rank)
 end
 
 local function rankOf(sq)
     return tonumber(sq and sq:sub(2, 2)) or 0
 end
 
-local function evaluate(game, color, yield_fn)
-    checkpoint(yield_fn)
-    local fox = game:fox_square()
-    if not fox then return color == Game.BLACK and 100000 or -100000 end
+local function sortedHounds(hounds)
+    table.sort(hounds)
+    return hounds
+end
 
-    local fox_rank = rankOf(fox)
-    local clone = game:clone()
-    clone.self_turn = Game.WHITE
-    local fox_mobility = #clone:moves({ verbose = true })
-    clone.self_turn = Game.BLACK
-    local hound_mobility = #clone:moves({ verbose = true })
-
-    local score = fox_rank * 120 + fox_mobility * 35 - hound_mobility * 8
+local function stateFromGame(game)
+    local state = {
+        fox = nil,
+        hounds = {},
+        turn = game:turn(),
+    }
     for sq, piece in pairs(game.board_state) do
-        checkpoint(yield_fn)
-        if piece.type == Game.HOUND then
-            local hound_rank = rankOf(sq)
-            if hound_rank >= fox_rank then
-                score = score - (hound_rank - fox_rank) * 10
-            else
-                score = score + 45
+        if piece.type == Game.FOX then
+            state.fox = sq
+        elseif piece.type == Game.HOUND then
+            state.hounds[#state.hounds + 1] = sq
+        end
+    end
+    sortedHounds(state.hounds)
+    return state
+end
+
+local function occupied(state)
+    local out = {}
+    if state.fox then out[state.fox] = true end
+    for _, sq in ipairs(state.hounds) do out[sq] = true end
+    return out
+end
+
+local function stateKey(state, depth)
+    return tostring(depth) .. "|" .. state.turn .. "|" .. tostring(state.fox) .. "|" .. table.concat(state.hounds, ",")
+end
+
+local function movesFor(state, color)
+    local moves = {}
+    local occ = occupied(state)
+
+    if color == Game.WHITE then
+        local file, rank = coords(state.fox)
+        for _, dir in ipairs(FOX_DIRS) do
+            local to = square(file + dir[1], rank + dir[2])
+            if to and not occ[to] then
+                moves[#moves + 1] = {
+                    from = state.fox,
+                    to = to,
+                    piece = Game.FOX,
+                    color = Game.WHITE,
+                    notation = "Fox " .. state.fox .. "-" .. to,
+                }
+            end
+        end
+        return moves
+    end
+
+    for _, from in ipairs(state.hounds) do
+        local file, rank = coords(from)
+        for _, dir in ipairs(HOUND_DIRS) do
+            local to = square(file + dir[1], rank + dir[2])
+            if to and not occ[to] then
+                moves[#moves + 1] = {
+                    from = from,
+                    to = to,
+                    piece = Game.HOUND,
+                    color = Game.BLACK,
+                    notation = "Hound " .. from .. "-" .. to,
+                }
             end
         end
     end
+    return moves
+end
 
-    return color == Game.WHITE and score or -score
+local function applyMove(state, move)
+    local next_state = {
+        fox = state.fox,
+        hounds = {},
+        turn = other(state.turn),
+    }
+    for i, sq in ipairs(state.hounds) do
+        next_state.hounds[i] = sq
+    end
+
+    if move.piece == Game.FOX then
+        next_state.fox = move.to
+    else
+        for i, sq in ipairs(next_state.hounds) do
+            if sq == move.from then
+                next_state.hounds[i] = move.to
+                break
+            end
+        end
+        sortedHounds(next_state.hounds)
+    end
+
+    return next_state
+end
+
+local function terminal(state)
+    if not state.fox then return true, "0-1" end
+    if rankOf(state.fox) == 8 then return true, "1-0" end
+
+    local moves = movesFor(state, state.turn)
+    if #moves > 0 then return false end
+    return true, state.turn == Game.WHITE and "0-1" or "1-0"
 end
 
 local function terminalScore(result, color, ply)
@@ -43,62 +139,81 @@ local function terminalScore(result, color, ply)
     return (winner == color and 100000 or -100000) - ply
 end
 
-local function moveScore(game, move, color, yield_fn)
+local function evaluate(state, color, yield_fn)
     checkpoint(yield_fn)
-    local clone = game:clone()
-    clone:move{ from = move.from, to = move.to }
-    return evaluate(clone, color, yield_fn)
+    if not state.fox then return color == Game.BLACK and 100000 or -100000 end
+
+    local fox_rank = rankOf(state.fox)
+    local fox_mobility = #movesFor(state, Game.WHITE)
+    local hound_mobility = #movesFor(state, Game.BLACK)
+    local score = fox_rank * 120 + fox_mobility * 35 - hound_mobility * 8
+
+    for _, sq in ipairs(state.hounds) do
+        checkpoint(yield_fn)
+        local hound_rank = rankOf(sq)
+        if hound_rank >= fox_rank then
+            score = score - (hound_rank - fox_rank) * 10
+        else
+            score = score + 45
+        end
+    end
+
+    return color == Game.WHITE and score or -score
 end
 
-local function orderedMoves(game, color, yield_fn)
-    local moves = game:moves({ verbose = true })
+local function moveScore(state, move, color, yield_fn)
+    checkpoint(yield_fn)
+    local next_state = applyMove(state, move)
+    return evaluate(next_state, color, yield_fn)
+end
+
+local function orderedMoves(state, color, yield_fn)
+    local moves = movesFor(state, state.turn)
     for _, move in ipairs(moves) do
-        move._score = moveScore(game, move, color, yield_fn)
+        move._score = moveScore(state, move, color, yield_fn)
     end
-    table.sort(moves, function(a, b)
-        return a._score > b._score
-    end)
+    table.sort(moves, function(a, b) return a._score > b._score end)
     return moves
 end
 
-local function search(game, depth, alpha, beta, color, ply, yield_fn)
+local function search(state, depth, alpha, beta, color, ply, yield_fn, cache)
     checkpoint(yield_fn)
-    local over, result = game:game_over()
+
+    local over, result = terminal(state)
     if over then return terminalScore(result, color, ply) end
-    if depth <= 0 then return evaluate(game, color, yield_fn) end
+    if depth <= 0 then return evaluate(state, color, yield_fn) end
 
-    local moves = orderedMoves(game, color, yield_fn)
-    if game:turn() == color then
-        local best = -math.huge
-        for _, move in ipairs(moves) do
-            checkpoint(yield_fn)
-            local clone = game:clone()
-            clone:move{ from = move.from, to = move.to }
-            local score = search(clone, depth - 1, alpha, beta, color, ply + 1, yield_fn)
-            if score > best then best = score end
-            if best > alpha then alpha = best end
-            if alpha >= beta then break end
-        end
-        return best
-    end
+    local key = stateKey(state, depth)
+    local cached = cache[key]
+    if cached then return cached end
 
-    local best = math.huge
+    local moves = orderedMoves(state, color, yield_fn)
+    local maximizing = state.turn == color
+    local best = maximizing and -math.huge or math.huge
+
     for _, move in ipairs(moves) do
         checkpoint(yield_fn)
-        local clone = game:clone()
-        clone:move{ from = move.from, to = move.to }
-        local score = search(clone, depth - 1, alpha, beta, color, ply + 1, yield_fn)
-        if score < best then best = score end
-        if best < beta then beta = best end
+        local score = search(applyMove(state, move), depth - 1, alpha, beta, color, ply + 1, yield_fn, cache)
+        if maximizing then
+            if score > best then best = score end
+            if best > alpha then alpha = best end
+        else
+            if score < best then best = score end
+            if best < beta then beta = best end
+        end
         if alpha >= beta then break end
     end
+
+    cache[key] = best
     return best
 end
 
 function AI.bestMove(game, depth, blunder_chance, yield_fn)
     if game.setup_pending then return nil end
-    local color = game:turn()
-    local moves = orderedMoves(game, color, yield_fn)
+
+    local state = stateFromGame(game)
+    local color = state.turn
+    local moves = orderedMoves(state, color, yield_fn)
     if #moves == 0 then return nil end
 
     blunder_chance = tonumber(blunder_chance) or 0
@@ -110,13 +225,12 @@ function AI.bestMove(game, depth, blunder_chance, yield_fn)
     if depth == 0 then depth = 6 end
     depth = math.max(1, math.min(6, depth + 2))
 
+    local cache = {}
     local best = {}
     local best_score = -math.huge
     for _, move in ipairs(moves) do
         checkpoint(yield_fn)
-        local clone = game:clone()
-        clone:move{ from = move.from, to = move.to }
-        local score = search(clone, depth - 1, -math.huge, math.huge, color, 1, yield_fn)
+        local score = search(applyMove(state, move), depth - 1, -math.huge, math.huge, color, 1, yield_fn, cache)
         if score > best_score then
             best_score = score
             best = { move }

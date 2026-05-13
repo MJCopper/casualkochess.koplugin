@@ -2,33 +2,44 @@ local Reversi = require("reversigame")
 
 local AI = {}
 
-local STATIC_WEIGHTS = {
-    [1] = { 120, -20, 20, 5, 5, 20, -20, 120 },
-    [2] = { -20, -40, -5, -5, -5, -5, -40, -20 },
-    [3] = { 20, -5, 15, 3, 3, 15, -5, 20 },
-    [4] = { 5, -5, 3, 3, 3, 3, -5, 5 },
-    [5] = { 5, -5, 3, 3, 3, 3, -5, 5 },
-    [6] = { 20, -5, 15, 3, 3, 15, -5, 20 },
-    [7] = { -20, -40, -5, -5, -5, -5, -40, -20 },
-    [8] = { 120, -20, 20, 5, 5, 20, -20, 120 },
-}
-
-local CORNERS = { a1 = true, a8 = true, h1 = true, h8 = true }
-local DANGEROUS = {
-    a2 = "a1", b1 = "a1", b2 = "a1",
-    a7 = "a8", b8 = "a8", b7 = "a8",
-    h2 = "h1", g1 = "h1", g2 = "h1",
-    h7 = "h8", g8 = "h8", g7 = "h8",
-}
+local WHITE = Reversi.WHITE
+local BLACK = Reversi.BLACK
+local EMPTY = "."
+local BOARD_SIZE = 8
+local BOARD_SQUARES = 64
 local DIRS = {
     { 1, 0 }, { -1, 0 }, { 0, 1 }, { 0, -1 },
     { 1, 1 }, { 1, -1 }, { -1, 1 }, { -1, -1 },
 }
+local STATIC_WEIGHTS = {
+    120, -20, 20, 5, 5, 20, -20, 120,
+    -20, -40, -5, -5, -5, -5, -40, -20,
+    20, -5, 15, 3, 3, 15, -5, 20,
+    5, -5, 3, 3, 3, 3, -5, 5,
+    5, -5, 3, 3, 3, 3, -5, 5,
+    20, -5, 15, 3, 3, 15, -5, 20,
+    -20, -40, -5, -5, -5, -5, -40, -20,
+    120, -20, 20, 5, 5, 20, -20, 120,
+}
+local CORNERS = { [1] = true, [8] = true, [57] = true, [64] = true }
+local DANGEROUS = {
+    [2] = 1, [9] = 1, [10] = 1,
+    [7] = 8, [15] = 8, [16] = 8,
+    [49] = 57, [50] = 57, [58] = 57,
+    [55] = 64, [56] = 64, [63] = 64,
+}
+local EDGE = {}
+for i = 1, 8 do
+    EDGE[i] = true
+    EDGE[56 + i] = true
+    EDGE[(i - 1) * 8 + 1] = true
+    EDGE[i * 8] = true
+end
 local CORNER_LINES = {
-    { corner = "a1", lines = { { 1, 0 }, { 0, 1 } } },
-    { corner = "a8", lines = { { 1, 0 }, { 0, -1 } } },
-    { corner = "h1", lines = { { -1, 0 }, { 0, 1 } } },
-    { corner = "h8", lines = { { -1, 0 }, { 0, -1 } } },
+    { corner = 1, dirs = { { 1, 0 }, { 0, 1 } } },
+    { corner = 8, dirs = { { -1, 0 }, { 0, 1 } } },
+    { corner = 57, dirs = { { 1, 0 }, { 0, -1 } } },
+    { corner = 64, dirs = { { -1, 0 }, { 0, -1 } } },
 }
 
 local function checkpoint(fn)
@@ -36,40 +47,150 @@ local function checkpoint(fn)
 end
 
 local function other(color)
-    return color == Reversi.WHITE and Reversi.BLACK or Reversi.WHITE
+    return color == WHITE and BLACK or WHITE
 end
 
-local function square(file, rank)
-    if file < 1 or file > 8 or rank < 1 or rank > 8 then return nil end
-    return string.char(string.byte("a") + file - 1) .. tostring(rank)
+local function index(file, rank)
+    if file < 1 or file > BOARD_SIZE or rank < 1 or rank > BOARD_SIZE then return nil end
+    return (rank - 1) * BOARD_SIZE + file
 end
 
-local function coords(sq)
-    local file = string.byte(sq:sub(1, 1)) - string.byte("a") + 1
-    local rank = tonumber(sq:sub(2, 2))
+local function coords(idx)
+    local rank = math.floor((idx - 1) / BOARD_SIZE) + 1
+    local file = idx - (rank - 1) * BOARD_SIZE
     return file, rank
 end
 
-local function staticWeight(sq)
-    local file, rank = coords(sq)
-    return (STATIC_WEIGHTS[rank] and STATIC_WEIGHTS[rank][file]) or 0
+local function square(idx)
+    local file, rank = coords(idx)
+    return string.char(string.byte("a") + file - 1) .. tostring(rank)
 end
 
-local function pieceScore(game, color)
-    local white, black = game:counts()
-    return color == Reversi.WHITE and (white - black) or (black - white)
+local function idxFromSquare(sq)
+    local file = string.byte(sq:sub(1, 1)) - string.byte("a") + 1
+    local rank = tonumber(sq:sub(2, 2))
+    return index(file, rank)
 end
 
-local function potentialMobility(game, color)
+local function copyBoard(board)
+    local out = {}
+    for i = 1, BOARD_SQUARES do out[i] = board[i] end
+    return out
+end
+
+local function boardFromGame(game)
+    local board = {}
+    for i = 1, BOARD_SQUARES do board[i] = EMPTY end
+    for sq, piece in pairs(game.board_state) do
+        local idx = idxFromSquare(sq)
+        if idx then board[idx] = piece.color end
+    end
+    return board
+end
+
+local function flipsFor(board, idx, color)
+    if board[idx] ~= EMPTY then return nil end
+    local opponent = other(color)
+    local file, rank = coords(idx)
+    local flips = {}
+
+    for _, dir in ipairs(DIRS) do
+        local line = {}
+        local f, r = file + dir[1], rank + dir[2]
+        while true do
+            local scan = index(f, r)
+            if not scan or board[scan] == EMPTY then
+                line = nil
+                break
+            end
+            if board[scan] == color then break end
+            if board[scan] ~= opponent then
+                line = nil
+                break
+            end
+            line[#line + 1] = scan
+            f, r = f + dir[1], r + dir[2]
+        end
+        if line then
+            for _, flip in ipairs(line) do flips[#flips + 1] = flip end
+        end
+    end
+
+    if #flips == 0 then return nil end
+    return flips
+end
+
+local function movesFor(board, color)
+    local moves = {}
+    local candidates = {}
+    local opponent = other(color)
+    for idx = 1, BOARD_SQUARES do
+        if board[idx] == opponent then
+            local file, rank = coords(idx)
+            for _, dir in ipairs(DIRS) do
+                local empty = index(file + dir[1], rank + dir[2])
+                if empty and board[empty] == EMPTY then candidates[empty] = true end
+            end
+        end
+    end
+    for idx in pairs(candidates) do
+        local flips = flipsFor(board, idx, color)
+        if flips then
+            moves[#moves + 1] = { idx = idx, flips = flips }
+        end
+    end
+    return moves
+end
+
+local function applyMove(board, move, color)
+    local next_board = copyBoard(board)
+    next_board[move.idx] = color
+    for _, flip in ipairs(move.flips) do next_board[flip] = color end
+    return next_board
+end
+
+local function toGameMove(move, color)
+    local flips = {}
+    for i, idx in ipairs(move.flips or {}) do flips[i] = square(idx) end
+    local sq = square(move.idx)
+    return {
+        from = sq,
+        to = sq,
+        color = color,
+        flips = flips,
+        san = sq,
+        notation = sq,
+    }
+end
+
+local function boardKey(board, turn, depth)
+    local out = { turn, ":", tostring(depth), ":" }
+    for i = 1, BOARD_SQUARES do out[#out + 1] = board[i] end
+    return table.concat(out)
+end
+
+local function countPieces(board)
+    local white, black = 0, 0
+    for i = 1, BOARD_SQUARES do
+        if board[i] == WHITE then
+            white = white + 1
+        elseif board[i] == BLACK then
+            black = black + 1
+        end
+    end
+    return white, black
+end
+
+local function potentialMobility(board, color)
     local count = 0
     local seen = {}
     local opponent = other(color)
-    for sq, piece in pairs(game.board_state) do
-        if piece.color == opponent then
-            local file, rank = coords(sq)
+    for idx = 1, BOARD_SQUARES do
+        if board[idx] == opponent then
+            local file, rank = coords(idx)
             for _, dir in ipairs(DIRS) do
-                local empty = square(file + dir[1], rank + dir[2])
-                if empty and not game.board_state[empty] and not seen[empty] then
+                local empty = index(file + dir[1], rank + dir[2])
+                if empty and board[empty] == EMPTY and not seen[empty] then
                     seen[empty] = true
                     count = count + 1
                 end
@@ -79,14 +200,14 @@ local function potentialMobility(game, color)
     return count
 end
 
-local function frontierDiscs(game, color)
+local function frontierDiscs(board, color)
     local count = 0
-    for sq, piece in pairs(game.board_state) do
-        if piece.color == color then
-            local file, rank = coords(sq)
+    for idx = 1, BOARD_SQUARES do
+        if board[idx] == color then
+            local file, rank = coords(idx)
             for _, dir in ipairs(DIRS) do
-                local adj = square(file + dir[1], rank + dir[2])
-                if adj and not game.board_state[adj] then
+                local adj = index(file + dir[1], rank + dir[2])
+                if adj and board[adj] == EMPTY then
                     count = count + 1
                     break
                 end
@@ -96,25 +217,23 @@ local function frontierDiscs(game, color)
     return count
 end
 
-local function stableEdgeDiscs(game, color)
+local function stableEdgeDiscs(board, color)
     local count = 0
     local seen = {}
     for _, corner in ipairs(CORNER_LINES) do
-        local piece = game.board_state[corner.corner]
-        if piece and piece.color == color then
+        if board[corner.corner] == color then
             if not seen[corner.corner] then
                 seen[corner.corner] = true
                 count = count + 1
             end
-            for _, dir in ipairs(corner.lines) do
+            for _, dir in ipairs(corner.dirs) do
                 local file, rank = coords(corner.corner)
                 file, rank = file + dir[1], rank + dir[2]
                 while true do
-                    local sq = square(file, rank)
-                    local edge_piece = sq and game.board_state[sq]
-                    if not edge_piece or edge_piece.color ~= color then break end
-                    if not seen[sq] then
-                        seen[sq] = true
+                    local idx = index(file, rank)
+                    if not idx or board[idx] ~= color then break end
+                    if not seen[idx] then
+                        seen[idx] = true
                         count = count + 1
                     end
                     file, rank = file + dir[1], rank + dir[2]
@@ -125,14 +244,14 @@ local function stableEdgeDiscs(game, color)
     return count
 end
 
-local function evaluate(game, color, yield_fn)
+local function evaluate(board, color, yield_fn)
     checkpoint(yield_fn)
     local opponent = other(color)
-    local my_moves = #game:moves({ color = color })
-    local opp_moves = #game:moves({ color = opponent })
-    local white, black = game:counts()
+    local white, black = countPieces(board)
     local total = white + black
-    local empty = 64 - total
+    local empty = BOARD_SQUARES - total
+    local my_moves = #movesFor(board, color)
+    local opp_moves = #movesFor(board, opponent)
     local early = empty > 36
     local late = empty <= 14
     local mobility_weight = early and 38 or (late and 8 or 28)
@@ -140,67 +259,74 @@ local function evaluate(game, color, yield_fn)
     local frontier_weight = early and 14 or (late and 3 or 9)
     local disc_weight = late and 8 or (empty <= 24 and 3 or 0)
     local score = (my_moves - opp_moves) * mobility_weight
-    score = score + (potentialMobility(game, color) - potentialMobility(game, opponent)) * potential_weight
-    score = score - (frontierDiscs(game, color) - frontierDiscs(game, opponent)) * frontier_weight
-    score = score + (stableEdgeDiscs(game, color) - stableEdgeDiscs(game, opponent)) * 65
 
-    for sq, piece in pairs(game.board_state) do
+    score = score + (potentialMobility(board, color) - potentialMobility(board, opponent)) * potential_weight
+    score = score - (frontierDiscs(board, color) - frontierDiscs(board, opponent)) * frontier_weight
+    score = score + (stableEdgeDiscs(board, color) - stableEdgeDiscs(board, opponent)) * 65
+    score = score + (color == WHITE and (white - black) or (black - white)) * disc_weight
+
+    for idx = 1, BOARD_SQUARES do
         checkpoint(yield_fn)
-        local sign = piece.color == color and 1 or -1
-        score = score + sign * staticWeight(sq) * 3
-        if CORNERS[sq] then
-            score = score + sign * 700
-        elseif DANGEROUS[sq] and not game.board_state[DANGEROUS[sq]] then
-            score = score - sign * 220
-        elseif sq:match("^[ah]") or sq:match("[18]$") then
-            score = score + sign * 18
+        local piece = board[idx]
+        if piece ~= EMPTY then
+            local sign = piece == color and 1 or -1
+            score = score + sign * STATIC_WEIGHTS[idx] * 3
+            if CORNERS[idx] then
+                score = score + sign * 700
+            elseif DANGEROUS[idx] and board[DANGEROUS[idx]] == EMPTY then
+                score = score - sign * 220
+            elseif EDGE[idx] then
+                score = score + sign * 18
+            end
         end
     end
 
-    score = score + pieceScore(game, color) * disc_weight
     return score
 end
 
-local function moveScore(game, move, color, yield_fn)
-    checkpoint(yield_fn)
-    local score = #(move.flips or {}) * 3 + staticWeight(move.to) * 4
-    if CORNERS[move.to] then
-        score = score + 900
-    elseif DANGEROUS[move.to] and not game.board_state[DANGEROUS[move.to]] then
-        score = score - 350
-    elseif move.to:match("^[ah]") or move.to:match("[18]$") then
-        score = score + 55
-    end
+local function terminalScore(board, color, ply)
+    local white, black = countPieces(board)
+    if white == black then return 0 end
+    local won = color == WHITE and white > black or black > white
+    local margin = math.abs(white - black)
+    return (won and 100000 or -100000) + (won and margin or -margin) - ply
+end
 
-    local clone = game:clone()
-    clone:move{ to = move.to }
-    score = score + evaluate(clone, color, yield_fn)
+local function branchLimit(depth)
+    if depth >= 6 then return 3 end
+    if depth >= 5 then return 4 end
+    if depth >= 4 then return 5 end
+    return nil
+end
+
+local function orderScore(board, move, color)
+    local score = #(move.flips or {}) * 8 + STATIC_WEIGHTS[move.idx] * 4
+    if CORNERS[move.idx] then
+        score = score + 1200
+    elseif DANGEROUS[move.idx] and board[DANGEROUS[move.idx]] == EMPTY then
+        score = score - 450
+    elseif EDGE[move.idx] then
+        score = score + 80
+    end
     return score
 end
 
-local function orderedMoves(game, color, yield_fn, limit)
-    local moves = game:moves({ verbose = true })
-    for _, move in ipairs(moves) do
-        checkpoint(yield_fn)
-        move._score = moveScore(game, move, color, yield_fn)
-    end
-    table.sort(moves, function(a, b)
-        return a._score > b._score
-    end)
+local function orderedMoves(board, color, limit)
+    local moves = movesFor(board, color)
+    for _, move in ipairs(moves) do move._score = orderScore(board, move, color) end
+    table.sort(moves, function(a, b) return a._score > b._score end)
     if limit and #moves > limit then
-        for i = #moves, limit + 1, -1 do
-            moves[i] = nil
-        end
+        for i = #moves, limit + 1, -1 do moves[i] = nil end
     end
     return moves
 end
 
-local function bestHeuristicMove(game, moves, color, yield_fn)
+local function bestHeuristicMove(board, moves, color, yield_fn)
     local best = {}
     local best_score = -math.huge
     for _, move in ipairs(moves) do
         checkpoint(yield_fn)
-        local score = move._score or moveScore(game, move, color, yield_fn)
+        local score = evaluate(applyMove(board, move, color), color, yield_fn)
         if score > best_score then
             best_score = score
             best = { move }
@@ -212,74 +338,71 @@ local function bestHeuristicMove(game, moves, color, yield_fn)
 end
 
 local function weakerMove(moves)
-    table.sort(moves, function(a, b)
-        return (a._score or 0) > (b._score or 0)
-    end)
+    table.sort(moves, function(a, b) return (a._score or 0) > (b._score or 0) end)
     local start = math.max(1, math.floor(#moves / 2) + 1)
     return moves[math.random(start, #moves)]
 end
 
-local function terminalScore(result, color, ply)
-    if result == "1/2-1/2" then return 0 end
-    local winner = result == "1-0" and Reversi.WHITE or Reversi.BLACK
-    return (winner == color and 100000 or -100000) - ply
-end
-
-local function branchLimit(depth)
-    if depth >= 6 then return 3 end
-    if depth >= 5 then return 4 end
-    if depth >= 4 then return 5 end
-    return 6
-end
-
-local function search(game, depth, alpha, beta, color, ply, yield_fn)
+local function search(board, turn, depth, alpha, beta, color, ply, cache, yield_fn)
     checkpoint(yield_fn)
-    local over, result = game:game_over()
-    if over then return terminalScore(result, color, ply) end
-    if depth <= 0 then return evaluate(game, color, yield_fn) end
-
-    local moves = orderedMoves(game, color, yield_fn, branchLimit(depth))
+    local moves = orderedMoves(board, turn, branchLimit(depth))
+    local opponent = other(turn)
     if #moves == 0 then
-        local clone = game:clone()
-        clone.self_turn = other(clone.self_turn)
-        return search(clone, depth - 1, alpha, beta, color, ply + 1, yield_fn)
+        if #movesFor(board, opponent) == 0 then
+            return terminalScore(board, color, ply)
+        end
+        return search(board, opponent, depth - 1, alpha, beta, color, ply + 1, cache, yield_fn)
     end
+    if depth <= 0 then return evaluate(board, color, yield_fn) end
 
-    if game:turn() == color then
+    local key = boardKey(board, turn, depth)
+    local cached = cache[key]
+    if cached then return cached end
+
+    local full_search = true
+    if turn == color then
         local best = -math.huge
         for _, move in ipairs(moves) do
             checkpoint(yield_fn)
-            local clone = game:clone()
-            clone:move{ to = move.to }
-            local score = search(clone, depth - 1, alpha, beta, color, ply + 1, yield_fn)
+            local score = search(applyMove(board, move, turn), opponent, depth - 1, alpha, beta, color, ply + 1, cache, yield_fn)
             if score > best then best = score end
             if best > alpha then alpha = best end
-            if alpha >= beta then break end
+            if alpha >= beta then
+                full_search = false
+                break
+            end
         end
+        if full_search then cache[key] = best end
         return best
     end
 
     local best = math.huge
     for _, move in ipairs(moves) do
         checkpoint(yield_fn)
-        local clone = game:clone()
-        clone:move{ to = move.to }
-        local score = search(clone, depth - 1, alpha, beta, color, ply + 1, yield_fn)
+        local score = search(applyMove(board, move, turn), opponent, depth - 1, alpha, beta, color, ply + 1, cache, yield_fn)
         if score < best then best = score end
         if best < beta then beta = best end
-        if alpha >= beta then break end
+        if alpha >= beta then
+            full_search = false
+            break
+        end
     end
+    if full_search then cache[key] = best end
     return best
 end
 
 function AI.bestMove(game, depth, blunder_chance, yield_fn)
     local color = game:turn()
-    local moves = orderedMoves(game, color, yield_fn)
+    local board = boardFromGame(game)
+    local moves = orderedMoves(board, color)
     if #moves == 0 then return nil end
 
     blunder_chance = tonumber(blunder_chance) or 0
     if blunder_chance > 0 and math.random() < blunder_chance then
-        return weakerMove(moves)
+        if math.random() < 0.5 then
+            return toGameMove(moves[math.random(#moves)], color)
+        end
+        return toGameMove(weakerMove(moves), color)
     end
 
     depth = tonumber(depth) or 4
@@ -287,17 +410,16 @@ function AI.bestMove(game, depth, blunder_chance, yield_fn)
     depth = math.max(1, math.min(6, depth))
 
     if depth <= 3 then
-        return bestHeuristicMove(game, moves, color, yield_fn)
+        return toGameMove(bestHeuristicMove(board, moves, color, yield_fn), color)
     end
 
-    moves = orderedMoves(game, color, yield_fn, branchLimit(depth))
+    moves = orderedMoves(board, color, branchLimit(depth))
+    local cache = {}
     local best = {}
     local best_score = -math.huge
     for _, move in ipairs(moves) do
         checkpoint(yield_fn)
-        local clone = game:clone()
-        clone:move{ to = move.to }
-        local score = search(clone, depth - 1, -math.huge, math.huge, color, 1, yield_fn)
+        local score = search(applyMove(board, move, color), other(color), depth - 1, -math.huge, math.huge, color, 1, cache, yield_fn)
         if score > best_score then
             best_score = score
             best = { move }
@@ -305,7 +427,7 @@ function AI.bestMove(game, depth, blunder_chance, yield_fn)
             best[#best + 1] = move
         end
     end
-    return best[math.random(#best)]
+    return toGameMove(best[math.random(#best)], color)
 end
 
 return AI

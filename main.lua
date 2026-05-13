@@ -32,8 +32,8 @@ local PathChooser = require("ui/widget/pathchooser")
 local LeftContainer = require("ui/widget/container/leftcontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
 
-local Chess = require("chess")
-local ChessBoard = require("board")
+local Chess = require("chessgame")
+local ChessBoard = require("chessboard")
 local CheckersGame = require("checkersgame")
 local CheckersBoard = require("checkersboard")
 local CheckersAI = require("checkersai")
@@ -1088,7 +1088,8 @@ function Kochess:launchCheckersAI()
         end,
         function(move)
             if not move then return end
-            local played = self.game:move{ from = move.from, to = move.to }
+            local played = self.game.commit_path and self.game:commit_path{ path = move.path }
+                or self.game:move{ from = move.from, to = move.to }
             if played then self.board:handleGameMove(played) end
         end
     )

@@ -1,4 +1,4 @@
-local Chess = require("chess")
+local Chess = require("chessgame")
 local UIManager = require("ui/uimanager")
 local Goldfish = require("goldfish")
 

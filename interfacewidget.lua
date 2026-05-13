@@ -90,8 +90,10 @@ function InterfaceWidget:buildOptions()
     local gap = VerticalSpan:new{ width = Size.padding.small }
     self.optionsGroup = VerticalGroup:new{
         width = self.dialog.element_width,
-        self:makeToggle("show_selected", _("Highlight Selected")),
+        self:makeToggle("thinking_indicator", _("Thinking Indicator")),
         gap,
+        self:makeToggle("show_selected", _("Highlight Selected")),
+        VerticalSpan:new{ width = Size.padding.small },
         self:makeToggle("learning_mode", _("Player Hints")),
         VerticalSpan:new{ width = Size.padding.small },
         self:makeToggle("opponent_hints", _("Opponent Hints")),
@@ -101,8 +103,6 @@ function InterfaceWidget:buildOptions()
         self:makeToggle("check_hints", _("Check Hints")),
         VerticalSpan:new{ width = Size.padding.small },
         self:makeToggle("rotate_top_pieces", _("Invert Opponent Pieces")),
-        VerticalSpan:new{ width = Size.padding.small },
-        self:makeToggle("thinking_indicator", _("Thinking Indicator")),
     }
 end
 

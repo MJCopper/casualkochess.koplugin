@@ -91,13 +91,14 @@ function Board:init()
 
     self:applySquareColors()
     local CenterContainer = require("ui/widget/container/centercontainer")
+    local table_size = self.table:getSize()
     self[1] = FrameContainer:new{
         bordersize = 0,
         background = self.background,
         padding = 0,
         padding_top = self.board_padding,
         CenterContainer:new{
-            dimen = Geom:new{ w = self.width, h = cell * BOARD_SIZE + self.board_padding },
+            dimen = Geom:new{ w = self.width, h = table_size.h + self.board_padding },
             self.table,
         },
     }

@@ -1,4 +1,4 @@
-local Chess = require("chess")
+local Chess = require("chessgame")
 
 local Goldfish = {}
 

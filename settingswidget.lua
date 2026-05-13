@@ -20,7 +20,7 @@ local MovableContainer = require("ui/widget/container/movablecontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
 local InfoMessage = require("ui/widget/infomessage")
 
-local Chess = require("chess")
+local Chess = require("chessgame")
 local EngineWidget = require("enginewidget")
 local InterfaceWidget = require("interfacewidget")
 local _ = require("gettext")
