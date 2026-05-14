@@ -7,7 +7,7 @@ Contributions by [kbarni](https://github.com/kbarni) to Reversi and Fox & Hounds
 ---
 
 ## Download
-https://github.com/MJCopper/casualkochess.koplugin/releases/download/v1.7.0/casualkochess.koplugin.v1.7.0.zip
+https://github.com/MJCopper/casualkochess.koplugin/releases/download/v2.0.0/casualkochess.koplugin.v2.0.0.zip
 
 ---
 
