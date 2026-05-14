@@ -567,7 +567,7 @@ function SettingsWidget:applyEngineChanges(s)
         self.parent.current_skill = v
         self.parent.engine_movetime = math.max(1, math.min(10, tonumber(s.engine_movetime) or 1))
         local d = tonumber(s.engine_depth) or 0
-        self.parent.engine_depth = (d >= 1 and d <= 6) and d or 0
+        self.parent.engine_depth = (d >= 1 and d <= 5) and d or 0
         local bc = math.max(0.0, math.min(1.0, tonumber(s.blunder_chance) or 0.0))
         self.parent.blunder_chance = bc
         if self.parent.weakening then self.parent.weakening:setChance(bc) end

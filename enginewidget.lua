@@ -166,13 +166,13 @@ end
 
 function EngineWidget:buildDepthGroup()
     local w = self.dialog.element_width
-    local min_d, max_d = 1, 7
-    local function depthToPos(d) return (d == 0) and 7 or d end
-    local function posToDepth(p) return (p == 7) and 0 or p end
+    local min_d, max_d = 1, 6
+    local function depthToPos(d) return (d == 0) and 6 or d end
+    local function posToDepth(p) return (p == 6) and 0 or p end
 
     self.depthProgress = ButtonProgressWidget:new{
         width       = w,
-        num_buttons = 7,
+        num_buttons = 6,
         position    = depthToPos(self.changes.engine_depth or 0),
         fine_tune   = true,
         callback    = function(pos)

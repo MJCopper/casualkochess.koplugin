@@ -548,7 +548,7 @@ function Kochess:loadEngineSettings()
 
     self.current_skill = self:getSetting("skill_level", defaults.skill_level)
     local d = tonumber(self:getSetting("engine_depth", defaults.engine_depth)) or defaults.engine_depth
-    self.engine_depth = (d >= 1 and d <= 6) and d or 0
+    self.engine_depth = (d >= 1 and d <= 5) and d or 0
     self.engine_movetime = math.max(1, math.min(10, tonumber(self:getSetting("engine_movetime", defaults.engine_movetime)) or defaults.engine_movetime))
     self.blunder_chance = math.max(0, math.min(1, tonumber(self:getSetting("blunder_chance", defaults.blunder_chance)) or defaults.blunder_chance))
     if self.weakening then
@@ -1220,7 +1220,7 @@ function Kochess:launchUCI()
     local btime = math.max(100, self.timer:getRemainingTime(Chess.BLACK) * 1000)
 
     local d = tonumber(self.engine_depth) or 0
-    local depth_limit = (d >= 1 and d <= 6) and d or nil
+    local depth_limit = (d >= 1 and d <= 5) and d or nil
 
     self.engine:go({
         wtime    = wtime,
