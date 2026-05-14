@@ -28,6 +28,11 @@ local function rankOf(sq)
     return tonumber(sq and sq:sub(2, 2)) or 0
 end
 
+local function fileOf(sq)
+    if not sq then return 0 end
+    return string.byte(sq:sub(1, 1)) - string.byte("a") + 1
+end
+
 local function sortedHounds(hounds)
     table.sort(hounds)
     return hounds
@@ -136,7 +141,10 @@ end
 
 local function terminalScore(result, color, ply)
     local winner = result == "1-0" and Game.WHITE or Game.BLACK
-    return (winner == color and 100000 or -100000) - ply
+    if winner == color then
+        return 100000 - ply
+    end
+    return -100000 + ply
 end
 
 local function evaluate(state, color, yield_fn)
@@ -144,18 +152,92 @@ local function evaluate(state, color, yield_fn)
     if not state.fox then return color == Game.BLACK and 100000 or -100000 end
 
     local fox_rank = rankOf(state.fox)
-    local fox_mobility = #movesFor(state, Game.WHITE)
+    local fox_file = fileOf(state.fox)
+    local fox_moves = movesFor(state, Game.WHITE)
     local hound_mobility = #movesFor(state, Game.BLACK)
-    local score = fox_rank * 120 + fox_mobility * 35 - hound_mobility * 8
+    local fox_forward = 0
+    local fox_backward = 0
+    local hounds_ahead = {}
+    local file_coverage = {}
+    local left_diag_blocked = false
+    local right_diag_blocked = false
+    local score = fox_rank * 120 - hound_mobility * 2
+
+    for _, move in ipairs(fox_moves) do
+        checkpoint(yield_fn)
+        if rankOf(move.to) > fox_rank then
+            fox_forward = fox_forward + 1
+        else
+            fox_backward = fox_backward + 1
+        end
+    end
+    score = score + fox_forward * 50 + fox_backward * 10
+
+    if fox_file == 1 or fox_file == 8 then
+        score = score - 50
+    elseif fox_file == 2 or fox_file == 7 then
+        score = score - 25
+    end
 
     for _, sq in ipairs(state.hounds) do
         checkpoint(yield_fn)
         local hound_rank = rankOf(sq)
+        local hound_file = fileOf(sq)
         if hound_rank >= fox_rank then
-            score = score - (hound_rank - fox_rank) * 10
+            local rank_diff = hound_rank - fox_rank
+            local file_diff = hound_file - fox_file
+            local file_dist = math.abs(file_diff)
+            hounds_ahead[#hounds_ahead + 1] = { file = hound_file, rank = hound_rank }
+            file_coverage[hound_file] = true
+
+            if rank_diff > 0 and file_dist == rank_diff then
+                if file_diff < 0 then
+                    left_diag_blocked = true
+                else
+                    right_diag_blocked = true
+                end
+            end
+
+            score = score - rank_diff * 10
+            if file_dist <= 1 and rank_diff <= 2 then
+                score = score - 35
+            elseif file_dist <= 2 and rank_diff <= 3 then
+                score = score - 15
+            end
         else
             score = score + 45
         end
+    end
+
+    if left_diag_blocked and right_diag_blocked then
+        score = score - 120
+    elseif left_diag_blocked or right_diag_blocked then
+        score = score - 40
+    end
+
+    local covered_count = 0
+    for _ in pairs(file_coverage) do covered_count = covered_count + 1 end
+    score = score - covered_count * 15
+
+    table.sort(hounds_ahead, function(a, b) return a.file < b.file end)
+    local best_wall = #hounds_ahead > 0 and 1 or 0
+    local cur_wall = best_wall
+    for i = 2, #hounds_ahead do
+        local gap = hounds_ahead[i].file - hounds_ahead[i - 1].file
+        if gap <= 2 then
+            cur_wall = cur_wall + 1
+            if cur_wall > best_wall then best_wall = cur_wall end
+        else
+            cur_wall = 1
+        end
+    end
+
+    if best_wall >= 4 then
+        score = score - 60
+    elseif best_wall == 3 then
+        score = score - 35
+    elseif best_wall == 2 then
+        score = score - 15
     end
 
     return color == Game.WHITE and score or -score
