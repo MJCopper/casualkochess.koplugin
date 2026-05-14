@@ -3,6 +3,7 @@ Casual Chess, Checkers, Reversi and Fox & Hounds plugin for KOReader, designed f
 Chess has been derived from the work by Baptiste Fouques & Victor Fariña
 
 Contributions by [kbarni](https://github.com/kbarni) to Reversi and Fox & Hounds AI engines.
+
 ---
 
 ## Download
