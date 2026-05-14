@@ -4,6 +4,7 @@ local AI = {}
 
 local FOX_DIRS = { { 1, 1 }, { -1, 1 }, { 1, -1 }, { -1, -1 } }
 local HOUND_DIRS = { { 1, -1 }, { -1, -1 } }
+local SOLVER_CACHE = {}
 
 local function checkpoint(fn)
     if fn then fn() end
@@ -64,6 +65,10 @@ end
 
 local function stateKey(state, depth)
     return tostring(depth) .. "|" .. state.turn .. "|" .. tostring(state.fox) .. "|" .. table.concat(state.hounds, ",")
+end
+
+local function solverKey(state)
+    return state.turn .. "|" .. tostring(state.fox) .. "|" .. table.concat(state.hounds, ",")
 end
 
 local function movesFor(state, color)
@@ -145,6 +150,10 @@ local function terminalScore(result, color, ply)
         return 100000 - ply
     end
     return -100000 + ply
+end
+
+local function winnerFromResult(result)
+    return result == "1-0" and Game.WHITE or Game.BLACK
 end
 
 local function evaluate(state, color, yield_fn)
@@ -371,20 +380,128 @@ local function search(state, depth, alpha, beta, color, ply, yield_fn, cache)
     return best
 end
 
-function AI.bestMove(game, depth, blunder_chance, yield_fn)
-    if game.setup_pending then return nil end
+local function betterSolverLine(candidate, best, turn)
+    if not best then return true end
+    local candidate_wins = candidate.winner == turn
+    local best_wins = best.winner == turn
+    if candidate_wins ~= best_wins then return candidate_wins end
+    if candidate_wins then return candidate.plies < best.plies end
+    return candidate.plies > best.plies
+end
 
-    local state = stateFromGame(game)
-    local color = state.turn
-    local moves = orderedMoves(state, color, yield_fn)
-    if #moves == 0 then return nil end
+local function solverOrderedMoves(state)
+    local moves = movesFor(state, state.turn)
+    table.sort(moves, function(a, b)
+        if state.turn == Game.WHITE then
+            local ar, br = rankOf(a.to), rankOf(b.to)
+            if ar ~= br then return ar > br end
+            return math.abs(fileOf(a.to) - fileOf(state.fox)) < math.abs(fileOf(b.to) - fileOf(state.fox))
+        end
 
-    blunder_chance = tonumber(blunder_chance) or 0
-    if blunder_chance > 0 and math.random() < blunder_chance then
-        return moves[math.random(#moves)]
+        local fox_file = fileOf(state.fox)
+        local ar, br = rankOf(a.to), rankOf(b.to)
+        if ar ~= br then return ar < br end
+        return math.abs(fileOf(a.to) - fox_file) < math.abs(fileOf(b.to) - fox_file)
+    end)
+    return moves
+end
+
+local function solveState(state, budget, yield_fn)
+    checkpoint(yield_fn)
+    if budget.nodes <= 0 then return nil end
+    budget.nodes = budget.nodes - 1
+
+    local over, result = terminal(state)
+    if over then
+        return { winner = winnerFromResult(result), plies = 0 }
     end
 
-    depth = tonumber(depth) or 4
+    local key = solverKey(state)
+    local cached = SOLVER_CACHE[key]
+    if cached then return cached end
+
+    local moves = solverOrderedMoves(state)
+    local best = nil
+    for _, move in ipairs(moves) do
+        checkpoint(yield_fn)
+        local child = solveState(applyMove(state, move), budget, yield_fn)
+        if not child then return nil end
+        local line = {
+            winner = child.winner,
+            plies = child.plies + 1,
+            move = move,
+        }
+        if line.winner == state.turn then
+            SOLVER_CACHE[key] = line
+            return line
+        end
+        if betterSolverLine(line, best, state.turn) then
+            best = line
+        end
+    end
+
+    SOLVER_CACHE[key] = best
+    return best
+end
+
+local function solverBudget(depth)
+    if depth == 0 then return 40000 end
+    if depth >= 5 then return 20000 end
+    if depth == 4 then return 10000 end
+    if depth == 3 then return 5000 end
+    if depth == 2 then return 2000 end
+    if depth == 1 then return 500 end
+end
+
+local function rankedHeuristicMoves(state, color, moves, yield_fn)
+    local ranked = {}
+    for _, move in ipairs(moves) do
+        checkpoint(yield_fn)
+        ranked[#ranked + 1] = {
+            move = move,
+            score = moveScore(state, move, color, yield_fn),
+        }
+    end
+    table.sort(ranked, function(a, b) return a.score > b.score end)
+    return ranked
+end
+
+local function lessBestMove(state, color, moves, blunder_chance, preferred_move, yield_fn)
+    local ranked = rankedHeuristicMoves(state, color, moves, yield_fn)
+    if #ranked <= 1 then return moves[1] end
+
+    if preferred_move then
+        table.sort(ranked, function(a, b)
+            if a.move == preferred_move then return true end
+            if b.move == preferred_move then return false end
+            return a.score > b.score
+        end)
+    end
+
+    local chance = math.max(0, math.min(1, tonumber(blunder_chance) or 0))
+    local start_pos = 2
+    local end_pos = math.min(#ranked, 2)
+    if chance >= 0.45 then
+        end_pos = math.min(#ranked, math.max(2, math.ceil(#ranked * 0.5)))
+    elseif chance >= 0.25 then
+        end_pos = math.min(#ranked, 3)
+    end
+
+    local best_score = ranked[1].score
+    while start_pos <= #ranked and best_score - ranked[start_pos].score > 350 do
+        start_pos = start_pos + 1
+    end
+    if start_pos > #ranked then
+        start_pos = 2
+        end_pos = math.min(#ranked, 2)
+    elseif end_pos < start_pos then
+        end_pos = start_pos
+    end
+
+    return ranked[math.random(start_pos, end_pos)].move
+end
+
+local function heuristicBestMove(state, color, moves, depth, yield_fn)
     if depth == 0 then depth = 8 end
     depth = math.max(1, math.min(8, depth + 2))
 
@@ -403,6 +520,33 @@ function AI.bestMove(game, depth, blunder_chance, yield_fn)
     end
 
     return best[math.random(#best)]
+end
+
+function AI.bestMove(game, depth, blunder_chance, yield_fn)
+    if game.setup_pending then return nil end
+
+    local state = stateFromGame(game)
+    local color = state.turn
+    local moves = orderedMoves(state, color, yield_fn)
+    if #moves == 0 then return nil end
+
+    depth = tonumber(depth) or 4
+    blunder_chance = tonumber(blunder_chance) or 0
+    local effective_blunder = color == Game.BLACK and blunder_chance * 0.25 or blunder_chance
+    local preferred_move = nil
+    local budget_nodes = solverBudget(depth)
+    if color == Game.BLACK and budget_nodes then
+        local solved = solveState(state, { nodes = budget_nodes }, yield_fn)
+        if solved and solved.move then
+            preferred_move = solved.move
+        end
+    end
+
+    preferred_move = preferred_move or heuristicBestMove(state, color, moves, depth, yield_fn)
+    if effective_blunder > 0 and math.random() < effective_blunder then
+        return lessBestMove(state, color, moves, effective_blunder, preferred_move, yield_fn)
+    end
+    return preferred_move
 end
 
 return AI

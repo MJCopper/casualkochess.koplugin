@@ -1100,7 +1100,7 @@ function Kochess:runCooperativeAI(busy_key, guard, compute, apply)
     self[busy_key] = true
     self:startThinkingIndicator()
 
-    local checkpoint_limit = 20
+    local checkpoint_limit = 200
     if self:isFoxHoundMode() then
         checkpoint_limit = 2000
     elseif self:isCheckersMode() then
@@ -1114,7 +1114,9 @@ function Kochess:runCooperativeAI(busy_key, guard, compute, apply)
     self._ai_token = token
     local co
     local checks = 0
+    local yield_after = os.time() + 3
     local function yield_fn()
+        if os.time() < yield_after then return end
         checks = checks + 1
         if checks >= checkpoint_limit then
             checks = 0
@@ -1276,7 +1278,11 @@ end
 
 function Kochess:updateTimerDisplay()
     local ind = self.running and ((self.game.turn()==Chess.WHITE and " < ") or " > ") or " || "
-    self.status_bar:setTitle(self.timer:formatTime(self.timer:getRemainingTime(Chess.WHITE)) .. ind .. self.timer:formatTime(self.timer:getRemainingTime(Chess.BLACK)))
+    if self:isChessMode() then
+        self.status_bar:setTitle(self.timer:formatTime(self.timer:getRemainingTime(Chess.WHITE)) .. ind .. self.timer:formatTime(self.timer:getRemainingTime(Chess.BLACK)))
+    else
+        self.status_bar:setTitle("")
+    end
     self:updatePlayerDisplay(ind)
     UIManager:setDirty(self.status_bar, "ui")
 end
