@@ -164,7 +164,6 @@ local function evaluate(state, color, yield_fn)
     local score = fox_rank * 120 - hound_mobility * 2
 
     for _, move in ipairs(fox_moves) do
-        checkpoint(yield_fn)
         if rankOf(move.to) > fox_rank then
             fox_forward = fox_forward + 1
         else
@@ -180,7 +179,6 @@ local function evaluate(state, color, yield_fn)
     end
 
     for _, sq in ipairs(state.hounds) do
-        checkpoint(yield_fn)
         local hound_rank = rankOf(sq)
         local hound_file = fileOf(sq)
         if hound_rank >= fox_rank then

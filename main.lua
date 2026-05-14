@@ -1101,6 +1101,13 @@ function Kochess:runCooperativeAI(busy_key, guard, compute, apply)
     self:startThinkingIndicator()
 
     local checkpoint_limit = 20
+    if self:isFoxHoundMode() then
+        checkpoint_limit = 2000
+    elseif self:isCheckersMode() then
+        checkpoint_limit = 500
+    elseif self:isReversiMode() then
+        checkpoint_limit = 200
+    end
     local initial_delay = 0.15
     local resume_delay = 0.02
     local token = {}
