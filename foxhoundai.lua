@@ -157,10 +157,15 @@ local function evaluate(state, color, yield_fn)
     local hound_mobility = #movesFor(state, Game.BLACK)
     local fox_forward = 0
     local fox_backward = 0
+    local hound_data = {}
     local hounds_ahead = {}
     local file_coverage = {}
     local left_diag_blocked = false
     local right_diag_blocked = false
+    local left_guard = nil
+    local right_guard = nil
+    local min_hound_rank = 9
+    local max_hound_rank = 0
     local score = fox_rank * 120 - hound_mobility * 2
 
     for _, move in ipairs(fox_moves) do
@@ -181,12 +186,21 @@ local function evaluate(state, color, yield_fn)
     for _, sq in ipairs(state.hounds) do
         local hound_rank = rankOf(sq)
         local hound_file = fileOf(sq)
+        local rank_diff = hound_rank - fox_rank
+        hound_data[#hound_data + 1] = { file = hound_file, rank = hound_rank, diff = rank_diff }
+        if hound_rank < min_hound_rank then min_hound_rank = hound_rank end
+        if hound_rank > max_hound_rank then max_hound_rank = hound_rank end
         if hound_rank >= fox_rank then
-            local rank_diff = hound_rank - fox_rank
             local file_diff = hound_file - fox_file
             local file_dist = math.abs(file_diff)
             hounds_ahead[#hounds_ahead + 1] = { file = hound_file, rank = hound_rank }
             file_coverage[hound_file] = true
+
+            if hound_file < fox_file and (not left_guard or fox_file - hound_file < fox_file - left_guard.file) then
+                left_guard = { file = hound_file, rank = hound_rank, diff = rank_diff }
+            elseif hound_file > fox_file and (not right_guard or hound_file - fox_file < right_guard.file - fox_file) then
+                right_guard = { file = hound_file, rank = hound_rank, diff = rank_diff }
+            end
 
             if rank_diff > 0 and file_dist == rank_diff then
                 if file_diff < 0 then
@@ -207,10 +221,61 @@ local function evaluate(state, color, yield_fn)
         end
     end
 
+    local rank_spread = max_hound_rank - min_hound_rank
+    if rank_spread <= 1 then
+        score = score - 70
+    elseif rank_spread == 2 then
+        score = score - 35
+    else
+        score = score + (rank_spread - 2) * 120
+    end
+
+    local ideal_band = 0
+    local badly_placed = 0
+    for _, hound in ipairs(hound_data) do
+        if hound.diff < 0 then
+            score = score + 140 + math.abs(hound.diff) * 45
+            badly_placed = badly_placed + 1
+        elseif hound.diff == 0 then
+            score = score + 60
+        elseif hound.diff <= 3 then
+            score = score - 28
+            ideal_band = ideal_band + 1
+        elseif hound.diff == 4 then
+            score = score + 10
+        else
+            score = score + (hound.diff - 4) * 40
+            badly_placed = badly_placed + 1
+        end
+        if rank_spread > 2 and hound.rank <= min_hound_rank + 1 then
+            score = score + 90
+        end
+        if max_hound_rank - hound.rank > 2 then
+            score = score + (max_hound_rank - hound.rank - 2) * 80
+        end
+    end
+    if ideal_band >= 3 then
+        score = score - 55
+    elseif badly_placed >= 2 then
+        score = score + 80
+    end
+
     if left_diag_blocked and right_diag_blocked then
         score = score - 120
     elseif left_diag_blocked or right_diag_blocked then
         score = score - 40
+    end
+
+    if left_guard and right_guard then
+        local guard_gap = right_guard.file - left_guard.file
+        score = score - 65
+        if guard_gap <= 4 then
+            score = score - 35
+        else
+            score = score + (guard_gap - 4) * 30
+        end
+    else
+        score = score + 90
     end
 
     local covered_count = 0
@@ -236,6 +301,24 @@ local function evaluate(state, color, yield_fn)
         score = score - 35
     elseif best_wall == 2 then
         score = score - 15
+    end
+
+    for _, move in ipairs(fox_moves) do
+        local to_rank = rankOf(move.to)
+        if to_rank > fox_rank then
+            local ahead_after_move = 0
+            for _, hound in ipairs(hound_data) do
+                if hound.rank > to_rank then ahead_after_move = ahead_after_move + 1 end
+            end
+            if ahead_after_move <= 1 then
+                score = score + 220
+            elseif ahead_after_move == 2 then
+                score = score + 90
+            end
+            if to_rank >= min_hound_rank then
+                score = score + 160
+            end
+        end
     end
 
     return color == Game.WHITE and score or -score
@@ -302,8 +385,8 @@ function AI.bestMove(game, depth, blunder_chance, yield_fn)
     end
 
     depth = tonumber(depth) or 4
-    if depth == 0 then depth = 6 end
-    depth = math.max(1, math.min(6, depth + 2))
+    if depth == 0 then depth = 8 end
+    depth = math.max(1, math.min(8, depth + 2))
 
     local cache = {}
     local best = {}
