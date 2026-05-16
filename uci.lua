@@ -32,6 +32,9 @@ local function parse_uci_line(line, state)
     elseif line:find("^bestmove") then
         local mv = line:match("^bestmove%s+(%S+)")
 
+        if not state.searching then return end
+        state.searching = false
+        eng._go_token = nil
         state.bestmove = mv
         eng:_trigger("bestmove", mv)
 
@@ -64,6 +67,7 @@ function UCIEngine.spawn(cmd, args)
         uciok    = false,
         readyok  = false,
         bestmove = nil,
+        searching = false,
         options  = {},
         last_output = nil,
         last_error = nil,
@@ -198,8 +202,15 @@ function UCIEngine:go(opts)
     end
 
     self.state.bestmove = nil
+    self.state.searching = true
+    local token = {}
+    self._go_token = token
 
-    if not self.send(cmd) then return end
+    if not self.send(cmd) then
+        self.state.searching = false
+        self._go_token = nil
+        return
+    end
 
     local movetime = tonumber(opts.movetime) or 0
     local max_seconds = math.max(10, (movetime / 1000) + 10)
@@ -207,11 +218,12 @@ function UCIEngine:go(opts)
     local timed_out = false
 
     Utils.pollingLoop(0.25, self._reader, function()
-        if self.closed or self.state.bestmove then return false end
+        if self.closed or self._go_token ~= token or self.state.bestmove then return false end
         local process_error = self.state.process_error or Utils.pollProcess(self.pid)
         if process_error then
             self.state.process_error = process_error
             self.state.last_error = process_error
+            self.state.searching = false
             self:_trigger("process_error", process_error)
             return false
         end
@@ -219,25 +231,31 @@ function UCIEngine:go(opts)
         if ticks_left <= 0 then
             if not timed_out then
                 timed_out = true
+                self.state.searching = false
+                self._go_token = nil
                 self:_trigger("go_timeout", self.state.last_error or self.state.last_output)
             end
             return false
         end
-        return not self.closed and not self.state.bestmove
+        return not self.closed and self._go_token == token and not self.state.bestmove
     end)
 end
 
 function UCIEngine:stop()
+    self._go_token = nil
+    self.state.searching = false
     self.send("stop")
 end
 
 function UCIEngine:quit()
     if self.closed then return end
-    self._write("quit")
+    self._go_token = nil
+    self.state.searching = false
     self.closed = true
     Utils.closeFd(self.fd_write)
     Utils.closeFd(self.fd_read)
     Utils.pollProcess(self.pid)
+    Utils.terminateProcess(self.pid)
     self.fd_write = nil
     self.fd_read = nil
 end

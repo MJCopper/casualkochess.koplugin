@@ -131,6 +131,9 @@ function Kochess:onCloseWidget()
     if self.board then
         self.board:clearValidMoves()
     end
+    if self.timer then
+        self.timer:stop()
+    end
     self:shutdownEngine()
 end
 
@@ -497,10 +500,12 @@ function Kochess:startGoldfishFallback()
     self.engine_busy = false
     self.goldfish_active = true
     self.engine = GoldfishUCI.new()
+    local engine = self.engine
     self.engine_status_text = stockfish_status
     self.engine_last_output = "Goldfish Lua fallback is active."
 
-    self.engine:on("read", function(data)
+    engine:on("read", function(data)
+        if self.engine ~= engine then return end
         if data then
             for line in tostring(data):gmatch("[^\r\n]+") do
                 self.engine_last_output = line
@@ -508,10 +513,11 @@ function Kochess:startGoldfishFallback()
         end
     end)
 
-    self.engine:on("uciok", function()
-        self.engine.send("setoption name Skill Level value " .. tostring(self.current_skill or 0))
-        self.engine:ucinewgame()
-        self.engine.send("isready")
+    engine:on("uciok", function()
+        if self.engine ~= engine then return end
+        engine.send("setoption name Skill Level value " .. tostring(self.current_skill or 0))
+        engine:ucinewgame()
+        engine.send("isready")
         if not self:getSetting("saved_pgn", "") or self:getSetting("saved_pgn", "") == "" then
             self:updatePgnLogInitialText()
         end
@@ -521,7 +527,8 @@ function Kochess:startGoldfishFallback()
         end
     end)
 
-    self.engine:on("bestmove", function(move_uci)
+    engine:on("bestmove", function(move_uci)
+        if self.engine ~= engine then return end
         self.engine_busy = false
         self:stopThinkingIndicator()
         if not self.game.is_human(self.game.turn()) then
@@ -529,7 +536,7 @@ function Kochess:startGoldfishFallback()
         end
     end)
 
-    self.engine:uci()
+    engine:uci()
 end
 
 function Kochess:loadEngineSettings()
@@ -579,18 +586,18 @@ function Kochess:initializeEngine()
     end
 
     self.engine = Uci.UCIEngine.spawn(UCI_ENGINE_PATH, {})
+    local engine = self.engine
 
     
-    if not self.engine then
+    if not engine then
 
         self:markEngineInvalid("Engine process could not be created.")
         return
     end
 
-    self.engine:on("read", function(data)
+    engine:on("read", function(data)
+        if self.engine ~= engine then return end
         if data then
-            local clean = data:gsub("\r", "")
-
             for line in tostring(data):gmatch("[^\r\n]+") do
                 self.engine_last_output = line
                 if line:match("execvp failed") then
@@ -619,22 +626,23 @@ function Kochess:initializeEngine()
         end
     end)
 
-    self.engine:on("uciok", function()
+    engine:on("uciok", function()
+        if self.engine ~= engine then return end
         self.engine_status_text = nil
 
         if not self:getSetting("saved_pgn", "") or self:getSetting("saved_pgn", "") == "" then
             self:updatePgnLogInitialText()
         end
 
-        self.engine.send("setoption name Hash value 8")
-        self.engine.send("setoption name Threads value 1")
-        self.engine.send("setoption name Skill Level value " .. defaultSkill)
-        self.engine.send("setoption name Move Overhead value 150")
-        self.engine.send("setoption name Ponder value false")
-        self.engine.send("setoption name Slow Mover value 90")
+        engine.send("setoption name Hash value 8")
+        engine.send("setoption name Threads value 1")
+        engine.send("setoption name Skill Level value " .. defaultSkill)
+        engine.send("setoption name Move Overhead value 150")
+        engine.send("setoption name Ponder value false")
+        engine.send("setoption name Slow Mover value 90")
         self.current_skill = defaultSkill
 
-        self.engine:ucinewgame()
+        engine:ucinewgame()
 
         -- Restored computer-vs-computer games can resume once UCI is ready.
         local is_cvc = not self.game.is_human(Chess.WHITE) and not self.game.is_human(Chess.BLACK)
@@ -644,12 +652,12 @@ function Kochess:initializeEngine()
                 moves[#moves+1] = m.from .. m.to .. (m.promotion or "")
             end
             if #moves > 0 then
-                self.engine:position({ moves = table.concat(moves, " ") })
+                engine:position({ moves = table.concat(moves, " ") })
             end
-            self.engine.send("isready")
+            engine.send("isready")
             self:launchNextMove()
         else
-            self.engine.send("isready")
+            engine.send("isready")
         end
 
         UIManager:setDirty(self, "ui")
@@ -658,7 +666,8 @@ function Kochess:initializeEngine()
         end
     end)
 
-    self.engine:on("bestmove", function(move_uci)
+    engine:on("bestmove", function(move_uci)
+        if self.engine ~= engine then return end
         self.engine_busy = false
         self:stopThinkingIndicator()
 
@@ -667,12 +676,14 @@ function Kochess:initializeEngine()
         end
     end)
 
-    self.engine:on("process_error", function(err)
+    engine:on("process_error", function(err)
+        if self.engine ~= engine then return end
         self.engine_busy = false
         self:markEngineInvalid(err or "Stockfish engine process failed.")
     end)
 
-    self.engine:on("uci_timeout", function(last_output)
+    engine:on("uci_timeout", function(last_output)
+        if self.engine ~= engine then return end
         local text = "Timed out waiting for Stockfish UCI response."
         if last_output and last_output ~= "" then
             text = text .. "\n" .. last_output
@@ -680,7 +691,8 @@ function Kochess:initializeEngine()
         self:markEngineInvalid(text)
     end)
 
-    self.engine:on("go_timeout", function(last_output)
+    engine:on("go_timeout", function(last_output)
+        if self.engine ~= engine then return end
         self.engine_busy = false
         local text = "Timed out waiting for Stockfish bestmove."
         if last_output and last_output ~= "" then
@@ -689,7 +701,7 @@ function Kochess:initializeEngine()
         self:markEngineInvalid(text)
     end)
     
-    self.engine:uci()
+    engine:uci()
 end
 
 function Kochess:initializeGameLogic()
@@ -1114,9 +1126,7 @@ function Kochess:runCooperativeAI(busy_key, guard, compute, apply)
     self._ai_token = token
     local co
     local checks = 0
-    local yield_after = os.time() + 3
     local function yield_fn()
-        if os.time() < yield_after then return end
         checks = checks + 1
         if checks >= checkpoint_limit then
             checks = 0
@@ -1242,7 +1252,7 @@ function Kochess:stopUCI()
     self.checkers_busy = false
     self.foxhound_busy = false
     self.reversi_busy = false
-    if self.engine and not self.engine.closed and self.engine.state.uciok then self.engine.send("stop") end
+    if self.engine and not self.engine.closed and self.engine.state.uciok then self.engine:stop() end
 end
 
 function Kochess:shutdownEngine()

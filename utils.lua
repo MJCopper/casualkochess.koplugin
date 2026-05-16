@@ -11,6 +11,7 @@ pcall(ffi.cdef, [[
     int execvp(const char *, char *const argv[]);
     void _exit(int);
     int waitpid(int, int *, int);
+    int kill(int, int);
     int dup2(int, int);
     int close(int);
     int setpgid(int, int);
@@ -30,14 +31,30 @@ pcall(ffi.cdef, [[
     int sched_setscheduler(int, int, void *);
 ]])
 
+pcall(ffi.cdef, [[
+    void *signal(int, void *);
+]])
+
+pcall(ffi.cdef, [[
+    int prctl(int, unsigned long, unsigned long, unsigned long, unsigned long);
+]])
+
 local PRIO_PROCESS = 0
+local PR_SET_PDEATHSIG = 1
 local SCHED_BATCH  = 3
 local POLLIN       = 0x001
 local POLLERR      = 0x008
 local POLLHUP      = 0x010
 local POLLNVAL     = 0x020
 local WNOHANG      = 1
+local SIGTERM      = 15
+local SIGKILL      = 9
+local SIGPIPE      = 13
 local BUF_SZ       = 4096
+
+pcall(function()
+    C.signal(SIGPIPE, ffi.cast("void *", 1))
+end)
 
 local Utils = {}
 
@@ -84,6 +101,7 @@ function Utils.execInSubProcess(cmd, args, with_pipes, double_fork)
 
         C.setpgid(0, 0)
 
+        pcall(function() C.prctl(PR_SET_PDEATHSIG, SIGTERM, 0, 0, 0) end)
         pcall(function() C.sched_setscheduler(0, SCHED_BATCH, nil) end)
         C.setpriority(PRIO_PROCESS, 0, 5)
 
@@ -189,6 +207,23 @@ function Utils.closeFd(fd)
     if fd then
         C.close(fd)
     end
+end
+
+function Utils.killProcess(pid, force)
+    if not pid or pid <= 0 then return end
+    C.kill(-pid, force and SIGKILL or SIGTERM)
+    C.kill(pid, force and SIGKILL or SIGTERM)
+    Utils.pollProcess(pid)
+end
+
+function Utils.terminateProcess(pid)
+    if not pid or pid <= 0 then return end
+    Utils.killProcess(pid)
+    UIManager:scheduleIn(1, function()
+        if not Utils.pollProcess(pid) then
+            Utils.killProcess(pid, true)
+        end
+    end)
 end
 
 return Utils

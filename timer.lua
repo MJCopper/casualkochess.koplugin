@@ -14,6 +14,7 @@ function Timer:new(duration, increment, callback)
         running = false,
         startTime = 0,
         callback = callback,
+        run_id = 0,
     }
     setmetatable(obj, self)
     return obj
@@ -21,11 +22,14 @@ end
 
 function Timer:start()
     if not self.running then
+        self.run_id = self.run_id + 1
+        local run_id = self.run_id
         self.startTime = os.time()
         self.running = true
         if self.callback then
             Utils.pollingLoop(TIMER_TIMEOUT,
                               function()
+                                  if self.run_id ~= run_id then return end
                                   if self:getRemainingTime(self.currentPlayer) <= 0 then
                                       self:stop()
                                       return
@@ -33,7 +37,7 @@ function Timer:start()
                                   self.callback()
                               end,
                               function()
-                                  return self.running
+                                  return self.running and self.run_id == run_id
                               end)
         end
     end
@@ -46,6 +50,7 @@ function Timer:stop()
                                                  + self.increment[self.currentPlayer])
         self.running = false
     end
+    self.run_id = self.run_id + 1
 end
 
 function Timer:switchPlayer()
@@ -58,6 +63,7 @@ function Timer:reset()
     self.time = { [Chess.WHITE] = self.base[Chess.WHITE], [Chess.BLACK] = self.base[Chess.BLACK] }
     self.currentPlayer = Chess.WHITE
     self.running = false
+    self.run_id = self.run_id + 1
 end
 
 function Timer:getRemainingTime(player)
