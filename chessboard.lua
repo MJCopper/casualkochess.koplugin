@@ -263,7 +263,7 @@ function Board:handleMove(from, to)
         end
     end
 
-    if is_pawn_promotion and self.onPromotionNeeded then
+    if is_pawn_promotion and self.onPromotionNeeded and self:isLegalMoveTarget(from, to) then
         self:unmarkSelected(from)
         self.onPromotionNeeded(from, to, piece.color)
     else
