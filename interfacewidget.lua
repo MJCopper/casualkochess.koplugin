@@ -84,15 +84,13 @@ end
 
 function InterfaceWidget:markDirty()
     self.is_dirty = true
+    if self.dialog._buttons_edit_callback then
+        self.dialog:_buttons_edit_callback(true)
+    end
     local close_btn = self.dialog.button_table:getButtonById("close")
     if close_btn then
         close_btn:setText(_("Discard"), close_btn.width)
         close_btn:refresh()
-    end
-    local save_btn = self.dialog.button_table:getButtonById("save")
-    if save_btn then
-        save_btn:enable()
-        save_btn:refresh()
     end
     UIManager:setDirty(self.parent, "ui")
 end
