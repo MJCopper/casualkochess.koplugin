@@ -75,6 +75,7 @@ function EngineWidget:show()
         dismiss_callback = function() UIManager:close(self.dialog) end,
     }
     dlg.element_width = math.floor(dlg.width * 0.8)
+    dlg.onCloseDialog = function() return true end
     self.dialog = dlg
 
     self:buildSkillGroup()

@@ -11,6 +11,8 @@ local UIManager = require("ui/uimanager")
 local OverlapGroup = require("ui/widget/overlapgroup")
 local IconWidget   = require("ui/widget/iconwidget")
 
+local _PLUGIN_DIR = (debug.getinfo(1, "S").source or ""):match("@(.+)/[^/]+%.lua$") or "."
+
 local BOARD_SIZE = 8
 local SELECTED_BORDER = 5
 
@@ -42,6 +44,7 @@ local Board = FrameContainer:extend{
     check_hints = false,
     flipped = false,
     rotate_top_pieces = false,
+    show_coordinates = false,
     _hint_squares  = nil,
     _previous_move_squares = nil,
     _check_square = nil,
@@ -62,11 +65,12 @@ function Board:init()
     -- ButtonTable applies vertical padding inside each square; keep icons square.
     local bt_pad_v = Screen:scaleBySize(4)
     self.board_padding = Screen:scaleBySize(8)
+    local coord_size = self.show_coordinates and Screen:scaleBySize(16) or 0
     local usable_w = self.width  - 2 * self.board_padding
-    local usable_h = self.height - self.board_padding
+    local usable_h = self.height - 2 * self.board_padding
     local cell = math.min(
-        math.floor(usable_w / BOARD_SIZE) - margins.w,
-        math.floor(usable_h / BOARD_SIZE) - margins.h
+        math.floor((usable_w - 2 * coord_size) / BOARD_SIZE) - margins.w,
+        math.floor((usable_h - 2 * coord_size) / BOARD_SIZE) - margins.h
     )
     self.button_size  = cell
     self.icon_height  = cell - 2 * bt_pad_v
@@ -101,7 +105,69 @@ function Board:init()
 
     self:applySquareColors()
     local CenterContainer = require("ui/widget/container/centercontainer")
-    local table_size = self.table:getSize()
+    local ts = self.table:getSize()
+
+    local inner_widget = self.table
+
+    if self.show_coordinates then
+        local HorizontalGroup = require("ui/widget/horizontalgroup")
+        local VerticalGroup   = require("ui/widget/verticalgroup")
+        local VerticalSpan    = require("ui/widget/verticalspan")
+        local ImageWidget     = require("ui/widget/imagewidget")
+        local file_letters = {"a","b","c","d","e","f","g","h"}
+
+        local corner = function()
+            return VerticalSpan:new{ width = coord_size }
+        end
+
+        local function make_label(name, w, h, rotated)
+            local suffix = rotated and "_rot" or ""
+            local path = _PLUGIN_DIR .. "/icons/coord_" .. name .. suffix .. ".svg"
+            return CenterContainer:new{
+                dimen = Geom:new{ w = w, h = h },
+                ImageWidget:new{
+                    file          = path,
+                    width         = coord_size,
+                    height        = coord_size,
+                    scale_factor  = 0,
+                    alpha         = true,
+                },
+            }
+        end
+
+        local function make_file_row(rotated)
+            local children = { corner() }
+            for file_idx = file_start, file_stop, file_step do
+                children[#children + 1] = make_label(
+                    file_letters[file_idx + 1], cell, coord_size, rotated)
+            end
+            children[#children + 1] = corner()
+            return HorizontalGroup:new(children)
+        end
+
+        local function make_rank_col(rotated)
+            local children = {}
+            for rank_idx = rank_start, rank_stop, rank_step do
+                children[#children + 1] = make_label(
+                    tostring(rank_idx + 1), coord_size, cell, rotated)
+            end
+            return VerticalGroup:new(children)
+        end
+
+        local rot = self.rotate_top_pieces
+        local middle_row = HorizontalGroup:new{ align = "top",
+            make_rank_col(false),
+            self.table,
+            make_rank_col(rot),
+        }
+        inner_widget = VerticalGroup:new{ align = "center",
+            make_file_row(rot),
+            middle_row,
+            make_file_row(false),
+        }
+    end
+
+    local inner_h = ts.h + 2 * coord_size
     local padded = FrameContainer:new{
         bordersize     = 0,
         background     = self.background,
@@ -109,10 +175,10 @@ function Board:init()
         padding_top    = self.board_padding,
         padding_left   = 0,
         padding_right  = 0,
-        padding_bottom = 0,
+        padding_bottom = self.board_padding,
         CenterContainer:new{
-            dimen = Geom:new{ w = self.width, h = table_size.h + self.board_padding },
-            self.table,
+            dimen = Geom:new{ w = self.width, h = inner_h },
+            inner_widget,
         },
     }
     self[1] = padded
@@ -136,6 +202,15 @@ function Board:setRotateTopPieces(rotate_top_pieces)
     rotate_top_pieces = rotate_top_pieces and true or false
     if self.rotate_top_pieces == rotate_top_pieces then return end
     self.rotate_top_pieces = rotate_top_pieces
+    if self.show_coordinates then self:init() end
+    self:updateBoard()
+end
+
+function Board:setShowCoordinates(show_coordinates)
+    show_coordinates = show_coordinates and true or false
+    if self.show_coordinates == show_coordinates then return end
+    self.show_coordinates = show_coordinates
+    self:init()
     self:updateBoard()
 end
 
