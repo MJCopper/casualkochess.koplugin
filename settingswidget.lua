@@ -371,7 +371,6 @@ function SettingsWidget:buildDifficultyGroup()
         self.changes.blunder_chance  = p.blunder_chance
         self:applyEngineChanges(self.changes)
         self:refreshDifficultyLabel()
-        self:markDirty()
         UIManager:setDirty(self.parent, "ui")
     end
 
