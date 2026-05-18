@@ -95,13 +95,14 @@ function SettingsWidget:initializeState()
         engine_movetime = (self.parent and self.parent.engine_movetime) or 1,
         blunder_chance  = (self.parent and self.parent.blunder_chance) or 0.20,
         force_goldfish  = (self.parent and self.parent.getSetting and self.parent:getSetting("force_goldfish", false)) or false,
-        learning_mode   = (self.parent and self.parent.board and self.parent.board.learning_mode == true) or false,
-        show_selected   = not (self.parent and self.parent.board and self.parent.board.show_selected == false),
+        learning_mode       = (self.parent and self.parent.board and self.parent.board.learning_mode == true) or false,
+        show_selected       = not (self.parent and self.parent.board and self.parent.board.show_selected == false),
         previous_move_hints = (self.parent and self.parent.board and self.parent.board.previous_move_hints == true) or false,
-        opponent_hints = (self.parent and self.parent.board and self.parent.board.opponent_hints == true) or false,
-        check_hints = (self.parent and self.parent.board and self.parent.board.check_hints == true) or false,
-        rotate_top_pieces = (self.parent and self.parent.board and self.parent.board.rotate_top_pieces == true) or false,
-        thinking_indicator = not (self.parent and self.parent.getSetting and self.parent:getSetting("thinking_indicator", true) == false),
+        opponent_hints      = (self.parent and self.parent.board and self.parent.board.opponent_hints == true) or false,
+        check_hints         = (self.parent and self.parent.board and self.parent.board.check_hints == true) or false,
+        rotate_top_pieces   = (self.parent and self.parent.board and self.parent.board.rotate_top_pieces == true) or false,
+        show_coordinates    = (self.parent and self.parent.board and self.parent.board.show_coordinates == true) or false,
+        thinking_indicator  = not (self.parent and self.parent.getSetting and self.parent:getSetting("thinking_indicator", true) == false),
         time_control = {
             [Chess.WHITE] = {
                 base_minutes  = self.timer.base[Chess.WHITE] / 60,
@@ -124,6 +125,7 @@ function SettingsWidget:show()
         end,
     }
     dlg.element_width = math.floor(dlg.width * 0.8)
+    dlg.onCloseDialog = function() return true end
     self.dialog = dlg
 
     self:buildGameModeGroup()
@@ -369,7 +371,6 @@ function SettingsWidget:buildDifficultyGroup()
         self.changes.blunder_chance  = p.blunder_chance
         self:applyEngineChanges(self.changes)
         self:refreshDifficultyLabel()
-        self:markDirty()
         UIManager:setDirty(self.parent, "ui")
     end
 
@@ -474,7 +475,6 @@ function SettingsWidget:buildEngineButton()
                     self.changes.force_goldfish  = saved.force_goldfish
                     self:applyEngineChanges(saved)
                     self:refreshDifficultyLabel()
-                    self:markDirty()
                     UIManager:setDirty(self.parent, "ui")
                 end,
             }
@@ -504,18 +504,19 @@ function SettingsWidget:buildInterfaceButton()
                     opponent_hints = self.changes.opponent_hints,
                     check_hints = self.changes.check_hints,
                     rotate_top_pieces = self.changes.rotate_top_pieces,
+                    show_coordinates = self.changes.show_coordinates,
                     thinking_indicator = self.changes.thinking_indicator,
                 },
                 onSave = function(saved)
-                    self.changes.show_selected = saved.show_selected
-                    self.changes.learning_mode = saved.learning_mode
+                    self.changes.show_selected       = saved.show_selected
+                    self.changes.learning_mode       = saved.learning_mode
                     self.changes.previous_move_hints = saved.previous_move_hints
-                    self.changes.opponent_hints = saved.opponent_hints
-                    self.changes.check_hints = saved.check_hints
-                    self.changes.rotate_top_pieces = saved.rotate_top_pieces
-                    self.changes.thinking_indicator = saved.thinking_indicator
+                    self.changes.opponent_hints      = saved.opponent_hints
+                    self.changes.check_hints         = saved.check_hints
+                    self.changes.rotate_top_pieces   = saved.rotate_top_pieces
+                    self.changes.show_coordinates    = saved.show_coordinates
+                    self.changes.thinking_indicator  = saved.thinking_indicator
                     self:applyInterfaceChanges(saved)
-                    self:markDirty()
                     UIManager:setDirty(self.parent, "ui")
                 end,
             }
@@ -533,6 +534,7 @@ function SettingsWidget:applyInterfaceChanges(s)
         board.opponent_hints = s.opponent_hints and true or false
         board.check_hints = s.check_hints and true or false
         board:setRotateTopPieces(s.rotate_top_pieces and true or false)
+        board:setShowCoordinates(s.show_coordinates and true or false)
         if not board.learning_mode then
             board:clearValidMoves()
             board:clearPreviousMoveHints()
@@ -554,6 +556,7 @@ function SettingsWidget:applyInterfaceChanges(s)
         p:setSetting("opponent_hints", s.opponent_hints and true or false)
         p:setSetting("check_hints", s.check_hints and true or false)
         p:setSetting("rotate_top_pieces", s.rotate_top_pieces and true or false)
+        p:setSetting("show_coordinates", s.show_coordinates and true or false)
         p:setSetting("thinking_indicator", s.thinking_indicator ~= false)
     end
 end
@@ -687,6 +690,7 @@ function SettingsWidget:resetToDefaults()
     self.changes.opponent_hints = false
     self.changes.check_hints = false
     self.changes.rotate_top_pieces = false
+    self.changes.show_coordinates = false
     self.changes.thinking_indicator = true
     self.changes.human_choice    = { [Chess.WHITE] = true, [Chess.BLACK] = false }
     self.changes.time_control    = {
@@ -732,6 +736,7 @@ function SettingsWidget:applyAndClose()
         p:setSetting("opponent_hints", s.opponent_hints and true or false)
         p:setSetting("check_hints", s.check_hints and true or false)
         p:setSetting("rotate_top_pieces", s.rotate_top_pieces and true or false)
+        p:setSetting("show_coordinates", s.show_coordinates and true or false)
         p:setSetting("thinking_indicator", s.thinking_indicator ~= false)
         local wc = s.time_control[Chess.WHITE]
         local bc = s.time_control[Chess.BLACK]

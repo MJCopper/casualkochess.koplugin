@@ -753,6 +753,7 @@ function Kochess:initializeBoard(board_h)
         check_hints = self:getSetting("check_hints", false),
         flipped = self:shouldFlipBoard(),
         rotate_top_pieces = self:getSetting("rotate_top_pieces", false),
+        show_coordinates  = self:getSetting("show_coordinates", false),
     }
 end
 
